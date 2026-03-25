@@ -114,7 +114,6 @@ class EditorViewModel: ObservableObject {
     @Published var isProcessing: Bool = false
     @Published var zoomScale: CGFloat = 1.0
     @Published var panOffset: CGSize = .zero
-    @Published var viewRotation: Double = 0.0
 
     // モザイク設定
     @Published var mosaicBlockSize: Int = 20
@@ -130,10 +129,6 @@ class EditorViewModel: ObservableObject {
     private var blinkTimer: Timer?
     /// ズーム前のスケール（ピンチ開始時）
     var baseZoomScale: CGFloat = 1.0
-
-    var isImageDocument: Bool {
-        document.type == .image
-    }
 
     var imageOrientation: ImageOrientation {
         if let image = displayImage {
@@ -230,16 +225,6 @@ class EditorViewModel: ObservableObject {
         panOffset = .zero
     }
 
-    // MARK: - Rotation
-
-    func rotate(by degrees: Double) {
-        viewRotation = (viewRotation + degrees).truncatingRemainder(dividingBy: 360)
-    }
-
-    func resetRotation() {
-        viewRotation = 0
-    }
-
     // MARK: - Standard Operations
 
     func undo() {
@@ -282,19 +267,11 @@ class EditorViewModel: ObservableObject {
         // 2) scaleEffect (center基準) を除去
         let p2 = CGPoint(x: (p1.x - center.x) / zoomScale + center.x,
                          y: (p1.y - center.y) / zoomScale + center.y)
-        // 3) rotation を除去
-        let angle = -viewRotation * .pi / 180
-        let cosA = cos(angle)
-        let sinA = sin(angle)
-        let dx = p2.x - center.x
-        let dy = p2.y - center.y
-        let p3 = CGPoint(x: cosA * dx - sinA * dy + center.x,
-                         y: sinA * dx + cosA * dy + center.y)
 
-        // 4) ビュー座標 → 画像ピクセル座標
+        // 3) ビュー座標 → 画像ピクセル座標
         let info = imageDisplayInfo(viewSize: viewSize, imageSize: imageSize)
-        let imageX = (p3.x - info.origin.x) / info.scale
-        let imageY = (p3.y - info.origin.y) / info.scale
+        let imageX = (p2.x - info.origin.x) / info.scale
+        let imageY = (p2.y - info.origin.y) / info.scale
         return CGPoint(x: max(0, min(imageSize.width - 1, imageX)),
                        y: max(0, min(imageSize.height - 1, imageY)))
     }
@@ -344,12 +321,6 @@ struct ToolbarView: View {
 
             // 背景透過
             toolButton(for: .backgroundRemoval, icon: "wand.and.stars", label: "背景透過", shortcut: "t")
-
-            // 回転（画像のみ）
-            if viewModel.isImageDocument {
-                divider
-                rotationSlider
-            }
 
             // ズームリセット
             if viewModel.zoomScale > 1.0 {
@@ -503,30 +474,6 @@ struct ToolbarView: View {
         }
     }
 
-    // MARK: - Rotation Slider
-
-    private var rotationSlider: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "rotate.left")
-                .font(.caption2)
-            Slider(value: $viewModel.viewRotation, in: -180...180, step: 1)
-                .controlSize(.small)
-                .frame(width: 100)
-            Text("\(Int(viewModel.viewRotation))°")
-                .font(.caption2)
-                .monospacedDigit()
-                .frame(width: 32, alignment: .trailing)
-            if viewModel.viewRotation != 0 {
-                Button(action: { viewModel.resetRotation() }) {
-                    Image(systemName: "arrow.counterclockwise")
-                        .font(.caption2)
-                }
-                .buttonStyle(.borderless)
-                .help("回転をリセット")
-            }
-        }
-    }
-
     // MARK: - Helpers
 
     private var divider: some View {
@@ -560,8 +507,7 @@ struct ToolbarView: View {
                 .frame(minWidth: 80, minHeight: 32)
         }
         .buttonStyle(.bordered)
-        .background(viewModel.selectedTool == tool ? Color.accentColor.opacity(0.2) : Color.clear)
-        .cornerRadius(6)
+        .tint(viewModel.selectedTool == tool ? .accentColor : nil)
         .keyboardShortcut(KeyEquivalent(shortcut), modifiers: [])
         .help(label)
     }
@@ -636,7 +582,6 @@ struct CanvasView: View {
                     }
                 }
             }
-            .rotationEffect(.degrees(viewModel.viewRotation))
             .scaleEffect(viewModel.zoomScale)
             .offset(viewModel.panOffset)
             .frame(width: geometry.size.width, height: geometry.size.height)
