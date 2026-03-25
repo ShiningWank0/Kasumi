@@ -310,7 +310,48 @@ mouseDragged イベント
 ---
 
 ## 開発環境セットアップ
-**開発環境:**
+
+### 必要な環境
+- macOS 13 Ventura以上
+- Xcode 15.0以上
+- Swift 5.9以上
+
+### ビルド手順
+
+1. リポジトリをクローン
+```bash
+git clone https://github.com/yourusername/Kasumi.git
+cd Kasumi
+```
+
+2. Xcodeでプロジェクトを開く
+```bash
+open Package.swift
+```
+
+3. ビルドして実行
+- `⌘ + R` でビルド・実行
+- または、ターミナルから: `swift build`
+
+### プロジェクト構造
+
+```
+Kasumi/
+├── Sources/
+│   ├── App/                  # アプリケーションエントリーポイント
+│   ├── Core/                 # ビジネスロジック層
+│   │   ├── Document/        # ドキュメントモデル
+│   │   ├── Processing/      # 画像処理（モザイク・トリミング等）
+│   │   ├── History/         # Undo/Redo管理
+│   │   └── Export/          # ファイル書き出し
+│   └── UI/                  # ユーザーインターフェース層
+│       ├── Editor/          # エディタ画面
+│       └── Settings/        # 設定画面
+├── Resources/               # アセット・Info.plist
+└── Tests/                   # ユニットテスト
+```
+
+### 開発ツール
 - エディタ: **Xcode**（メイン）
 - AIアシスト: **Claude Code**
 - ビルド・署名・配布: Xcode

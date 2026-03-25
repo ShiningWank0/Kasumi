@@ -1,0 +1,30 @@
+# Xcode
+*.xcodeproj
+!*.xcodeproj/project.pbxproj
+!*.xcodeproj/xcshareddata/
+!*.xcworkspace/contents.xcworkspacedata
+*.xcworkspace
+!default.xcworkspace
+*.xcuserdatad
+*.xcuserstate
+xcuserdata/
+DerivedData/
+
+# Swift Package Manager
+.swiftpm/
+.build/
+*.resolved
+
+# macOS
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Build
+build/
+Builds/
+
+# App-specific
+*.app
+*.dmg
