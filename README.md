@@ -326,35 +326,113 @@ cd Kasumi
 
 2. Xcodeでプロジェクトを開く
 ```bash
-open Package.swift
+open Kasumi.xcodeproj
+# または
+xed .
 ```
 
 3. ビルドして実行
 - `⌘ + R` でビルド・実行
 - または、ターミナルから: `swift build`
 
+### 🎨 SwiftUIプレビューの使用
+
+**開発効率を上げるため、SwiftUIプレビューを活用できます！**
+
+#### 利用可能なプレビュー
+
+| ファイル | プレビュー内容 |
+|---------|-------------|
+| `ContentView.swift` | メインウィンドウ、エディタビュー |
+| `SettingsView.swift` | 設定画面（General, Shortcuts, About） |
+| `EditorPreviews.swift` | ツールバー、キャンバス、フルエディタ、ツール状態、エフェクト種類 |
+
+#### プレビューの開き方
+
+1. Xcodeでファイルを開く（例: `ContentView.swift`）
+2. 右側のプレビューパネルを開く:
+   - メニュー: **Editor > Canvas** または
+   - ショートカット: `⌥ + ⌘ + Enter`
+3. ファイル内の `#Preview` マクロが自動的に検出される
+4. 複数のプレビューがある場合は、下部のタブで切り替え
+
+#### プレビュー例
+
+```swift
+// ContentView.swift
+#Preview("Main Window") {
+    ContentView()
+}
+
+#Preview("Editor View - With Sample Image") {
+    EditorView(document: sampleDocument)
+}
+
+// EditorPreviews.swift
+#Preview("Toolbar") {
+    ToolbarPreview()
+}
+
+#Preview("Canvas with Sample Image") {
+    CanvasPreview()
+}
+
+#Preview("Full Editor") {
+    FullEditorPreview()
+}
+```
+
+#### プレビューのメリット
+
+- ✅ **高速な反復開発**: ビルドせずにUIの変更を即座に確認
+- ✅ **複数の状態を同時表示**: 異なるツール状態を並べて比較
+- ✅ **サンプルデータで開発**: 実際の画像なしでレイアウトを調整
+- ✅ **ライブプレビュー**: コード変更がリアルタイムで反映
+
 ### プロジェクト構造
 
 ```
 Kasumi/
-├── Sources/
-│   ├── App/                  # アプリケーションエントリーポイント
-│   ├── Core/                 # ビジネスロジック層
-│   │   ├── Document/        # ドキュメントモデル
-│   │   ├── Processing/      # 画像処理（モザイク・トリミング等）
-│   │   ├── History/         # Undo/Redo管理
-│   │   └── Export/          # ファイル書き出し
-│   └── UI/                  # ユーザーインターフェース層
-│       ├── Editor/          # エディタ画面
-│       └── Settings/        # 設定画面
-├── Resources/               # アセット・Info.plist
-└── Tests/                   # ユニットテスト
+├── KasumiApp.swift           # SwiftUIアプリのエントリーポイント
+├── AppDelegateSwiftUI.swift  # グローバルショートカット管理
+├── ContentView.swift          # メインウィンドウ（プレビュー可能✨）
+├── SettingsView.swift         # 設定画面（プレビュー可能✨）
+├── EditorPreviews.swift       # エディタ関連プレビュー（プレビュー可能✨）
+│
+├── Core Components/
+│   ├── KasumiDocument.swift     # ドキュメントモデル
+│   ├── EditHistory.swift        # Undo/Redo管理
+│   ├── ImageProcessing.swift    # 画像処理（モザイク・トリミング等）
+│   └── Exporters.swift          # ファイル書き出し
+│
+├── UI Components (AppKit)/
+│   ├── EditorUI.swift           # エディタ、キャンバス、ツールバー
+│   ├── SettingsViewController.swift  # AppKit版設定画面
+│   └── GlobalShortcutMonitor.swift   # ショートカット監視
+│
+└── Resources/
+    ├── Assets.xcassets
+    └── Info.plist
 ```
+
+### アーキテクチャ
+
+**ハイブリッドアプローチ（SwiftUI + AppKit）**
+
+- **SwiftUI**: メインウィンドウ、設定画面、プレビュー
+- **AppKit**: 高度な画像編集UI（キャンバス、ツールバー）
+- **ブリッジ**: `NSViewControllerRepresentable` でAppKitビューをSwiftUIに統合
+
+このアプローチにより：
+- 📱 SwiftUIの高速プレビューを活用
+- 🎨 AppKitの精密なカスタムビュー制御
+- 🔄 両方の利点を組み合わせた開発体験
 
 ### 開発ツール
 - エディタ: **Xcode**（メイン）
 - AIアシスト: **Claude Code**
 - ビルド・署名・配布: Xcode
+- **プレビュー**: SwiftUI Canvas （毎回ビルド不要！）
 
 ---
 

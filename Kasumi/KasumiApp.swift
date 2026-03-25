@@ -5,14 +5,27 @@
 //  Created by Takuma Kaneko on 2026/03/25.
 //
 
-import Cocoa
+import SwiftUI
 
 @main
-class KasumiApp {
-    static func main() {
-        let app = NSApplication.shared
-        let delegate = AppDelegate()
-        app.delegate = delegate
-        app.run()
+struct KasumiApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+        }
+        .commands {
+            CommandGroup(replacing: .newItem) {
+                Button("Open...") {
+                    appDelegate.openDocumentAction()
+                }
+                .keyboardShortcut("o", modifiers: .command)
+            }
+        }
+        
+        Settings {
+            SettingsView()
+        }
     }
 }
