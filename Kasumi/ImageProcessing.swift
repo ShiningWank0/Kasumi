@@ -227,19 +227,12 @@ class TrimProcessor {
     }
 
     /// 指定した矩形範囲で画像をトリミング
+    /// 座標はCGImage座標系（原点が左上）で渡される前提
     func trim(to rect: CGRect) -> CGImage {
         let imageSize = CGSize(width: sourceImage.width, height: sourceImage.height)
 
-        // SwiftUIのビュー座標系ではY軸が上→下だが、CGImageではY軸が下→上
-        let flippedRect = CGRect(
-            x: rect.origin.x,
-            y: imageSize.height - rect.origin.y - rect.height,
-            width: rect.width,
-            height: rect.height
-        )
-
-        // 範囲を画像サイズ内にクランプ
-        let clampedRect = flippedRect.intersection(CGRect(origin: .zero, size: imageSize))
+        // CGImage.cropping(to:) は原点が左上の座標系 — Y反転不要
+        let clampedRect = rect.intersection(CGRect(origin: .zero, size: imageSize))
 
         guard !clampedRect.isEmpty, clampedRect.width > 1, clampedRect.height > 1 else {
             return sourceImage
