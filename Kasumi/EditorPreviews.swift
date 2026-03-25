@@ -10,16 +10,12 @@ import SwiftUI
 // MARK: - Toolbar Preview
 
 #Preview("Toolbar") {
-    ToolbarView(
-        selectedTool: .constant(.mosaicRect),
-        canUndo: true,
-        canRedo: false,
-        onUndo: {},
-        onRedo: {},
-        onSave: {}
-    )
-    .padding()
-    .frame(width: 600, height: 100)
+    let doc = KasumiDocument(image: createEditorSampleImage())
+    let vm = EditorViewModel(document: doc)
+    vm.selectedTool = .mosaicRect
+    return ToolbarView(viewModel: vm, axis: .horizontal)
+        .padding()
+        .frame(width: 800, height: 100)
 }
 
 // MARK: - Full Editor Preview
@@ -38,16 +34,16 @@ import SwiftUI
         Text("Tool Selection States")
             .font(.title2)
             .fontWeight(.bold)
-        
+
         ForEach([EditTool.trim, .mosaicRect, .mosaicStroke, .backgroundRemoval], id: \.self) { tool in
             HStack {
                 Text(tool.rawValue)
                     .frame(width: 150, alignment: .trailing)
-                
+
                 Image(systemName: tool.icon)
                     .font(.title2)
                     .foregroundColor(.accentColor)
-                
+
                 Spacer()
             }
             .padding()
@@ -66,7 +62,7 @@ import SwiftUI
         Text("Mosaic Effect Types")
             .font(.title2)
             .fontWeight(.bold)
-        
+
         ForEach([MosaicEffect.classic, .blur, .frostGlass, .colorFill], id: \.self) { effect in
             EffectPreviewRow(effect: effect)
         }
@@ -77,13 +73,13 @@ import SwiftUI
 
 struct EffectPreviewRow: View {
     let effect: MosaicEffect
-    
+
     var body: some View {
         HStack {
             Text(effectName)
                 .frame(width: 150, alignment: .trailing)
                 .fontWeight(.medium)
-            
+
             RoundedRectangle(cornerRadius: 8)
                 .fill(effectColor)
                 .frame(width: 100, height: 60)
@@ -91,7 +87,7 @@ struct EffectPreviewRow: View {
                     Text(effectIcon)
                         .font(.title)
                 )
-            
+
             Text(effectDescription)
                 .font(.caption)
                 .foregroundColor(.secondary)
@@ -101,7 +97,7 @@ struct EffectPreviewRow: View {
         .background(Color.secondary.opacity(0.05))
         .cornerRadius(8)
     }
-    
+
     private var effectName: String {
         switch effect {
         case .classic: return "Classic Mosaic"
@@ -110,7 +106,7 @@ struct EffectPreviewRow: View {
         case .colorFill: return "Color Fill"
         }
     }
-    
+
     private var effectIcon: String {
         switch effect {
         case .classic: return "▦"
@@ -119,7 +115,7 @@ struct EffectPreviewRow: View {
         case .colorFill: return "■"
         }
     }
-    
+
     private var effectColor: Color {
         switch effect {
         case .classic: return .purple
@@ -128,7 +124,7 @@ struct EffectPreviewRow: View {
         case .colorFill: return .gray
         }
     }
-    
+
     private var effectDescription: String {
         switch effect {
         case .classic: return "Pixelated blocks"
@@ -144,26 +140,26 @@ extension MosaicEffect: Hashable {}
 private func createEditorSampleImage() -> NSImage {
     let size = NSSize(width: 600, height: 400)
     let image = NSImage(size: size)
-    
+
     image.lockFocus()
-    
+
     let gradient = NSGradient(colors: [NSColor.systemTeal, NSColor.systemIndigo])
     gradient?.draw(in: NSRect(origin: .zero, size: size), angle: 135)
-    
-    let text = "Sample Image\n📸"
+
+    let text = "Sample Image"
     let paragraphStyle = NSMutableParagraphStyle()
     paragraphStyle.alignment = .center
-    
+
     let attrs: [NSAttributedString.Key: Any] = [
         .font: NSFont.systemFont(ofSize: 48, weight: .bold),
         .foregroundColor: NSColor.white,
         .paragraphStyle: paragraphStyle
     ]
-    
+
     let attrString = NSAttributedString(string: text, attributes: attrs)
     attrString.draw(in: NSRect(x: 0, y: 150, width: 600, height: 100))
-    
+
     image.unlockFocus()
-    
+
     return image
 }

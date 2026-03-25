@@ -15,6 +15,7 @@ import UniformTypeIdentifiers
 enum EditTool: String, CaseIterable {
     case none = "None"
     case trim = "Trim"
+    case mosaic = "Mosaic"
     case mosaicRect = "Mosaic Area"
     case mosaicStroke = "Mosaic Brush"
     case backgroundRemoval = "Background Removal"
@@ -23,6 +24,7 @@ enum EditTool: String, CaseIterable {
         switch self {
         case .none: return "circle"
         case .trim: return "crop"
+        case .mosaic: return "mosaic.fill"
         case .mosaicRect: return "square.on.square"
         case .mosaicStroke: return "paintbrush"
         case .backgroundRemoval: return "wand.and.stars"
@@ -33,19 +35,10 @@ enum EditTool: String, CaseIterable {
         switch self {
         case .none: return "なし"
         case .trim: return "切り抜き"
-        case .mosaicRect: return "モザイク"
+        case .mosaic: return "モザイク"
+        case .mosaicRect: return "範囲"
         case .mosaicStroke: return "ブラシ"
         case .backgroundRemoval: return "背景透過"
-        }
-    }
-
-    var shortcut: KeyEquivalent {
-        switch self {
-        case .none: return " "
-        case .trim: return "c"
-        case .mosaicRect: return "m"
-        case .mosaicStroke: return "b"
-        case .backgroundRemoval: return "t"
         }
     }
 }
@@ -99,21 +92,8 @@ struct EditorView: View {
     }
 
     private func toolbarSection(axis: Axis) -> some View {
-        VStack(spacing: 8) {
-            ToolbarView(
-                selectedTool: $viewModel.selectedTool,
-                canUndo: viewModel.canUndo,
-                canRedo: viewModel.canRedo,
-                onUndo: { viewModel.undo() },
-                onRedo: { viewModel.redo() },
-                onSave: { viewModel.save() },
-                hasBgPreview: viewModel.bgPreviewImage != nil,
-                onBgConfirm: { viewModel.confirmBackgroundRemoval() },
-                onBgCancel: { viewModel.cancelBackgroundRemoval() },
-                axis: axis
-            )
+        ToolbarView(viewModel: viewModel, axis: axis)
             .padding()
-        }
     }
 
     private var canvasSection: some View {
@@ -134,15 +114,25 @@ class EditorViewModel: ObservableObject {
     @Published var isProcessing: Bool = false
     @Published var zoomScale: CGFloat = 1.0
     @Published var panOffset: CGSize = .zero
+    @Published var viewRotation: Double = 0.0
+
+    // モザイク設定
+    @Published var mosaicBlockSize: Int = 20
+    @Published var mosaicBrushSize: CGFloat = 40
 
     // 背景透過プレビュー用
     @Published var bgPreviewImage: CGImage?
-    @Published var bgPreviewMask: CGImage?
-    @Published var marchingAntsPhase: CGFloat = 0
+    @Published var bgBorderVisible: Bool = true
 
     private let document: KasumiDocument
     private var backgroundTask: Task<Void, Never>?
-    private var marchingAntsTimer: Timer?
+    private var blinkTimer: Timer?
+    /// ズーム前のスケール（ピンチ開始時）
+    var baseZoomScale: CGFloat = 1.0
+
+    var isImageDocument: Bool {
+        document.type == .image
+    }
 
     var imageOrientation: ImageOrientation {
         if let image = displayImage {
@@ -189,7 +179,7 @@ class EditorViewModel: ObservableObject {
             let result = await remover.removeBackground(startingAt: imagePoint, tolerance: 30)
             if !Task.isCancelled, let result = result {
                 bgPreviewImage = result
-                startMarchingAnts()
+                startBorderBlink()
             }
             isProcessing = false
         }
@@ -208,39 +198,44 @@ class EditorViewModel: ObservableObject {
 
     private func clearBgPreview() {
         bgPreviewImage = nil
-        bgPreviewMask = nil
-        stopMarchingAnts()
+        stopBorderBlink()
+        bgBorderVisible = true
     }
 
-    private func startMarchingAnts() {
-        stopMarchingAnts()
-        marchingAntsTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
+    private func startBorderBlink() {
+        stopBorderBlink()
+        bgBorderVisible = true
+        blinkTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
-                guard let self = self else { return }
-                self.marchingAntsPhase += 4
-                if self.marchingAntsPhase > 100 {
-                    self.marchingAntsPhase = 0
-                }
+                self?.bgBorderVisible.toggle()
             }
         }
     }
 
-    private func stopMarchingAnts() {
-        marchingAntsTimer?.invalidate()
-        marchingAntsTimer = nil
-        marchingAntsPhase = 0
+    private func stopBorderBlink() {
+        blinkTimer?.invalidate()
+        blinkTimer = nil
     }
 
     // MARK: - Zoom
 
     func adjustZoom(by delta: CGFloat) {
-        let newScale = max(0.1, min(10.0, zoomScale + delta))
-        zoomScale = newScale
+        zoomScale = max(1.0, min(10.0, zoomScale + delta))
     }
 
     func resetZoom() {
         zoomScale = 1.0
         panOffset = .zero
+    }
+
+    // MARK: - Rotation
+
+    func rotate(by degrees: Double) {
+        viewRotation = (viewRotation + degrees).truncatingRemainder(dividingBy: 360)
+    }
+
+    func resetRotation() {
+        viewRotation = 0
     }
 
     // MARK: - Standard Operations
@@ -272,13 +267,32 @@ class EditorViewModel: ObservableObject {
         canRedo = document.canRedo
     }
 
+    // MARK: - Coordinate Conversion
+
+    /// ジェスチャー座標（GeometryReader空間）→ 画像ピクセル座標
+    /// scaleEffect はビューの中心基準、offset はその後に適用
     func convertToImageCoordinates(viewPoint: CGPoint, viewSize: CGSize, imageSize: CGSize) -> CGPoint {
+        let center = CGPoint(x: viewSize.width / 2, y: viewSize.height / 2)
+
+        // 1) offset を除去
+        let p1 = CGPoint(x: viewPoint.x - panOffset.width,
+                         y: viewPoint.y - panOffset.height)
+        // 2) scaleEffect (center基準) を除去
+        let p2 = CGPoint(x: (p1.x - center.x) / zoomScale + center.x,
+                         y: (p1.y - center.y) / zoomScale + center.y)
+        // 3) rotation を除去
+        let angle = -viewRotation * .pi / 180
+        let cosA = cos(angle)
+        let sinA = sin(angle)
+        let dx = p2.x - center.x
+        let dy = p2.y - center.y
+        let p3 = CGPoint(x: cosA * dx - sinA * dy + center.x,
+                         y: sinA * dx + cosA * dy + center.y)
+
+        // 4) ビュー座標 → 画像ピクセル座標
         let info = imageDisplayInfo(viewSize: viewSize, imageSize: imageSize)
-        // ズーム・パンを考慮
-        let adjustedX = (viewPoint.x - panOffset.width) / zoomScale
-        let adjustedY = (viewPoint.y - panOffset.height) / zoomScale
-        let imageX = (adjustedX - info.origin.x) / info.scale
-        let imageY = (adjustedY - info.origin.y) / info.scale
+        let imageX = (p3.x - info.origin.x) / info.scale
+        let imageY = (p3.y - info.origin.y) / info.scale
         return CGPoint(x: max(0, min(imageSize.width - 1, imageX)),
                        y: max(0, min(imageSize.height - 1, imageY)))
     }
@@ -298,16 +312,10 @@ class EditorViewModel: ObservableObject {
 // MARK: - Toolbar View
 
 struct ToolbarView: View {
-    @Binding var selectedTool: EditTool
-    let canUndo: Bool
-    let canRedo: Bool
-    let onUndo: () -> Void
-    let onRedo: () -> Void
-    let onSave: () -> Void
-    var hasBgPreview: Bool = false
-    var onBgConfirm: () -> Void = {}
-    var onBgCancel: () -> Void = {}
+    @ObservedObject var viewModel: EditorViewModel
     var axis: Axis = .horizontal
+
+    @State private var showMosaicSub = false
 
     var body: some View {
         let layout = axis == .horizontal
@@ -315,28 +323,67 @@ struct ToolbarView: View {
             : AnyLayout(VStackLayout(spacing: 10))
 
         layout {
-            // Tool buttons
-            ForEach([EditTool.trim, .mosaicRect, .mosaicStroke, .backgroundRemoval], id: \.self) { tool in
-                Button(action: {
-                    selectedTool = selectedTool == tool ? .none : tool
-                }) {
-                    Label(tool.label, systemImage: tool.icon)
+            // 切り抜き
+            toolButton(for: .trim, icon: "crop", label: "切り抜き", shortcut: "c")
+
+            // モザイク（階層メニュー）
+            mosaicMenu
+
+            // 背景透過
+            toolButton(for: .backgroundRemoval, icon: "wand.and.stars", label: "背景透過", shortcut: "t")
+
+            // 回転（画像のみ）
+            if viewModel.isImageDocument {
+                Divider()
+                    .frame(width: axis == .vertical ? 60 : nil, height: axis == .horizontal ? 32 : nil)
+
+                Button(action: { viewModel.rotate(by: -90) }) {
+                    Label("左回転", systemImage: "rotate.left")
+                        .font(.caption)
+                        .frame(minWidth: 60, minHeight: 32)
+                }
+                .buttonStyle(.bordered)
+                .help("左に90°回転")
+
+                Button(action: { viewModel.rotate(by: 90) }) {
+                    Label("右回転", systemImage: "rotate.right")
+                        .font(.caption)
+                        .frame(minWidth: 60, minHeight: 32)
+                }
+                .buttonStyle(.bordered)
+                .help("右に90°回転")
+
+                if viewModel.viewRotation != 0 {
+                    Button(action: { viewModel.resetRotation() }) {
+                        Label("回転リセット", systemImage: "arrow.counterclockwise")
+                            .font(.caption)
+                            .frame(minWidth: 80, minHeight: 32)
+                    }
+                    .buttonStyle(.bordered)
+                    .help("回転をリセット")
+                }
+            }
+
+            // ズームリセット
+            if viewModel.zoomScale > 1.0 {
+                Divider()
+                    .frame(width: axis == .vertical ? 60 : nil, height: axis == .horizontal ? 32 : nil)
+
+                Button(action: { viewModel.resetZoom() }) {
+                    Label("表示リセット", systemImage: "arrow.up.left.and.arrow.down.right")
                         .font(.caption)
                         .frame(minWidth: 80, minHeight: 32)
                 }
                 .buttonStyle(.bordered)
-                .background(selectedTool == tool ? Color.accentColor.opacity(0.2) : Color.clear)
-                .cornerRadius(6)
-                .keyboardShortcut(tool.shortcut, modifiers: [])
-                .help(tool.label)
+                .help("ズーム・移動をリセット")
             }
 
             // 背景透過プレビュー中の確定/キャンセルボタン
-            if hasBgPreview {
+            if viewModel.bgPreviewImage != nil {
                 Divider()
                     .frame(width: axis == .vertical ? 60 : nil, height: axis == .horizontal ? 32 : nil)
 
-                Button(action: onBgConfirm) {
+                Button(action: { viewModel.confirmBackgroundRemoval() }) {
                     Label("適用", systemImage: "checkmark.circle.fill")
                         .font(.caption)
                         .frame(minWidth: 60, minHeight: 32)
@@ -346,7 +393,7 @@ struct ToolbarView: View {
                 .keyboardShortcut(.return, modifiers: [])
                 .help("背景透過を適用 (Enter)")
 
-                Button(action: onBgCancel) {
+                Button(action: { viewModel.cancelBackgroundRemoval() }) {
                     Label("取消", systemImage: "xmark.circle")
                         .font(.caption)
                         .frame(minWidth: 60, minHeight: 32)
@@ -359,30 +406,30 @@ struct ToolbarView: View {
             Divider()
                 .frame(width: axis == .vertical ? 60 : nil, height: axis == .horizontal ? 32 : nil)
 
-            Button(action: onUndo) {
+            Button(action: { viewModel.undo() }) {
                 Label("元に戻す", systemImage: "arrow.uturn.backward")
                     .font(.caption)
                     .frame(minWidth: 70, minHeight: 32)
             }
             .buttonStyle(.bordered)
-            .disabled(!canUndo)
+            .disabled(!viewModel.canUndo)
             .keyboardShortcut("z", modifiers: .command)
             .help("元に戻す")
 
-            Button(action: onRedo) {
+            Button(action: { viewModel.redo() }) {
                 Label("やり直し", systemImage: "arrow.uturn.forward")
                     .font(.caption)
                     .frame(minWidth: 70, minHeight: 32)
             }
             .buttonStyle(.bordered)
-            .disabled(!canRedo)
+            .disabled(!viewModel.canRedo)
             .keyboardShortcut("z", modifiers: [.command, .shift])
             .help("やり直し")
 
             Divider()
                 .frame(width: axis == .vertical ? 60 : nil, height: axis == .horizontal ? 32 : nil)
 
-            Button(action: onSave) {
+            Button(action: { viewModel.save() }) {
                 Label("保存", systemImage: "square.and.arrow.down")
                     .font(.caption)
                     .frame(minWidth: 60, minHeight: 32)
@@ -395,6 +442,104 @@ struct ToolbarView: View {
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.95))
         .cornerRadius(8)
         .shadow(radius: 4)
+    }
+
+    // MARK: - Mosaic Sub-menu
+
+    @ViewBuilder
+    private var mosaicMenu: some View {
+        let isMosaicActive = viewModel.selectedTool == .mosaicRect || viewModel.selectedTool == .mosaicStroke
+
+        VStack(spacing: 4) {
+            Button(action: {
+                showMosaicSub.toggle()
+                if !showMosaicSub && isMosaicActive {
+                    viewModel.selectedTool = .none
+                }
+            }) {
+                Label("モザイク", systemImage: "square.on.square")
+                    .font(.caption)
+                    .frame(minWidth: 80, minHeight: 32)
+            }
+            .buttonStyle(.bordered)
+            .background(isMosaicActive ? Color.accentColor.opacity(0.2) : Color.clear)
+            .cornerRadius(6)
+            .keyboardShortcut("m", modifiers: [])
+            .help("モザイク")
+
+            if showMosaicSub || isMosaicActive {
+                VStack(spacing: 4) {
+                    // サブ選択: 範囲 or ブラシ
+                    HStack(spacing: 4) {
+                        Button(action: { viewModel.selectedTool = .mosaicRect }) {
+                            Label("範囲", systemImage: "rectangle.dashed")
+                                .font(.caption2)
+                                .frame(minWidth: 50, minHeight: 26)
+                        }
+                        .buttonStyle(.bordered)
+                        .background(viewModel.selectedTool == .mosaicRect ? Color.accentColor.opacity(0.3) : Color.clear)
+                        .cornerRadius(4)
+
+                        Button(action: { viewModel.selectedTool = .mosaicStroke }) {
+                            Label("ブラシ", systemImage: "paintbrush")
+                                .font(.caption2)
+                                .frame(minWidth: 50, minHeight: 26)
+                        }
+                        .buttonStyle(.bordered)
+                        .background(viewModel.selectedTool == .mosaicStroke ? Color.accentColor.opacity(0.3) : Color.clear)
+                        .cornerRadius(4)
+                    }
+
+                    // スライダー
+                    if viewModel.selectedTool == .mosaicRect {
+                        HStack(spacing: 4) {
+                            Text("粗さ")
+                                .font(.caption2)
+                                .frame(width: 30)
+                            Slider(value: Binding(
+                                get: { Double(viewModel.mosaicBlockSize) },
+                                set: { viewModel.mosaicBlockSize = Int($0) }
+                            ), in: 5...80, step: 1)
+                            .frame(minWidth: 80)
+                            Text("\(viewModel.mosaicBlockSize)")
+                                .font(.caption2)
+                                .frame(width: 24)
+                        }
+                    } else if viewModel.selectedTool == .mosaicStroke {
+                        HStack(spacing: 4) {
+                            Text("太さ")
+                                .font(.caption2)
+                                .frame(width: 30)
+                            Slider(value: $viewModel.mosaicBrushSize, in: 5...100, step: 1)
+                                .frame(minWidth: 80)
+                            Text("\(Int(viewModel.mosaicBrushSize))")
+                                .font(.caption2)
+                                .frame(width: 24)
+                        }
+                    }
+                }
+                .padding(4)
+                .background(Color(nsColor: .controlBackgroundColor).opacity(0.8))
+                .cornerRadius(6)
+            }
+        }
+    }
+
+    // MARK: - Tool Button Helper
+
+    private func toolButton(for tool: EditTool, icon: String, label: String, shortcut: Character) -> some View {
+        Button(action: {
+            viewModel.selectedTool = viewModel.selectedTool == tool ? .none : tool
+        }) {
+            Label(label, systemImage: icon)
+                .font(.caption)
+                .frame(minWidth: 80, minHeight: 32)
+        }
+        .buttonStyle(.bordered)
+        .background(viewModel.selectedTool == tool ? Color.accentColor.opacity(0.2) : Color.clear)
+        .cornerRadius(6)
+        .keyboardShortcut(KeyEquivalent(shortcut), modifiers: [])
+        .help(label)
     }
 }
 
@@ -409,10 +554,12 @@ struct CanvasView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            ZStack {
-                // チェッカーボード背景（透明部分を可視化）
-                CheckerboardView()
+            // チェッカーボードは常にビュー全体を覆う（回転・ズームの影響を受けない）
+            CheckerboardView()
+                .frame(width: geometry.size.width, height: geometry.size.height)
 
+            // 画像とオーバーレイはズーム・パン・回転の影響を受ける
+            ZStack {
                 if let image = viewModel.displayImage {
                     let imageSize = image.size
                     let displayInfo = canvasDisplayInfo(viewSize: geometry.size, imageSize: imageSize)
@@ -431,12 +578,11 @@ struct CanvasView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                    // マーチングアンツ（背景透過プレビュー）
-                    if viewModel.bgPreviewImage != nil {
-                        MarchingAntsOverlay(
+                    // 背景透過プレビューの境界線（赤色で点滅）
+                    if viewModel.bgPreviewImage != nil && viewModel.bgBorderVisible {
+                        TransparencyBorderOverlay(
                             previewImage: viewModel.bgPreviewImage!,
-                            displayInfo: displayInfo,
-                            phase: viewModel.marchingAntsPhase
+                            displayInfo: displayInfo
                         )
                     }
 
@@ -463,16 +609,18 @@ struct CanvasView: View {
                                 }
                             }
                         }
-                        .stroke(Color.blue.opacity(0.5), lineWidth: 40)
+                        .stroke(Color.blue.opacity(0.5), lineWidth: viewModel.mosaicBrushSize)
                     }
                 }
             }
+            .rotationEffect(.degrees(viewModel.viewRotation))
             .scaleEffect(viewModel.zoomScale)
             .offset(viewModel.panOffset)
+            .frame(width: geometry.size.width, height: geometry.size.height)
             .contentShape(Rectangle())
             .gesture(editGesture(in: geometry.size))
-            .gesture(zoomGesture())
-            .gesture(panGesture())
+            .simultaneousGesture(magnifyGesture())
+            .simultaneousGesture(panGesture())
             .onHover { hovering in
                 if viewModel.selectedTool == .backgroundRemoval && hovering {
                     NSCursor.crosshair.push()
@@ -534,10 +682,14 @@ struct CanvasView: View {
             }
     }
 
-    private func zoomGesture() -> some Gesture {
+    private func magnifyGesture() -> some Gesture {
         MagnifyGesture()
             .onChanged { value in
-                viewModel.zoomScale = max(0.1, min(10.0, value.magnification))
+                let newScale = viewModel.baseZoomScale * value.magnification
+                viewModel.zoomScale = max(1.0, min(10.0, newScale))
+            }
+            .onEnded { _ in
+                viewModel.baseZoomScale = viewModel.zoomScale
             }
     }
 
@@ -597,14 +749,14 @@ struct CanvasView: View {
         case .mosaicRect:
             let imageRect = convertRectToImageCoordinates(selectionRect, viewSize: size, imageSize: imageSize)
             if let processor = MosaicProcessor(image: cgImage) {
-                let result = processor.applyMosaic(in: imageRect, effect: .classic, blockSize: 20)
+                let result = processor.applyMosaic(in: imageRect, effect: .classic, blockSize: viewModel.mosaicBlockSize)
                 viewModel.applyEdit(NSImage(cgImage: result, size: NSSize(width: result.width, height: result.height)))
             }
 
         case .mosaicStroke:
             let imagePoints = convertPointsToImageCoordinates(currentPath, viewSize: size, imageSize: imageSize)
             if let processor = MosaicProcessor(image: cgImage) {
-                let result = processor.applyMosaicStroke(points: imagePoints, brushSize: 40, effect: .classic)
+                let result = processor.applyMosaicStroke(points: imagePoints, brushSize: viewModel.mosaicBrushSize, effect: .classic)
                 viewModel.applyEdit(NSImage(cgImage: result, size: NSSize(width: result.width, height: result.height)))
             }
 
@@ -620,16 +772,14 @@ struct CanvasView: View {
     }
 }
 
-// MARK: - Marching Ants Overlay
+// MARK: - Transparency Border Overlay (red blinking)
 
-struct MarchingAntsOverlay: View {
+struct TransparencyBorderOverlay: View {
     let previewImage: CGImage
     let displayInfo: (origin: CGPoint, scale: CGFloat, displaySize: CGSize)
-    let phase: CGFloat
 
     var body: some View {
         Canvas { context, size in
-            // プレビュー画像から透明境界を検出してマーチングアンツを描画
             let displayRect = CGRect(
                 x: displayInfo.origin.x,
                 y: displayInfo.origin.y,
@@ -637,7 +787,6 @@ struct MarchingAntsOverlay: View {
                 height: displayInfo.displaySize.height
             )
 
-            // 透明化された領域の境界に破線を描く
             let borderPath = createTransparencyBorderPath(
                 image: previewImage,
                 displayRect: displayRect
@@ -645,22 +794,16 @@ struct MarchingAntsOverlay: View {
 
             context.stroke(
                 borderPath,
-                with: .color(.white),
-                style: StrokeStyle(lineWidth: 2, dash: [8, 4], dashPhase: phase)
-            )
-            context.stroke(
-                borderPath,
-                with: .color(.black),
-                style: StrokeStyle(lineWidth: 2, dash: [8, 4], dashPhase: phase + 6)
+                with: .color(.red),
+                style: StrokeStyle(lineWidth: 2)
             )
         }
         .allowsHitTesting(false)
     }
 
     private func createTransparencyBorderPath(image: CGImage, displayRect: CGRect) -> Path {
-        // 簡易的なアプローチ: 画像をサンプリングして透明領域の境界を検出
-        let sampleWidth = min(image.width, 200)
-        let sampleHeight = min(image.height, 200)
+        let sampleWidth = min(image.width, 300)
+        let sampleHeight = min(image.height, 300)
         let stepX = max(1, image.width / sampleWidth)
         let stepY = max(1, image.height / sampleHeight)
 
@@ -686,21 +829,19 @@ struct MarchingAntsOverlay: View {
         var path = Path()
         let scaleX = displayRect.width / CGFloat(image.width)
         let scaleY = displayRect.height / CGFloat(image.height)
+        let dotW = max(scaleX * CGFloat(stepX), 1.5)
+        let dotH = max(scaleY * CGFloat(stepY), 1.5)
 
-        // 透明/不透明の境界ピクセルを検出
         for sy in stride(from: 0, to: image.height, by: stepY) {
             for sx in stride(from: 0, to: image.width, by: stepX) {
                 let offset = (sy * image.width + sx) * 4
                 let alpha = data[offset + 3]
 
                 if alpha == 0 {
-                    // 隣接ピクセルに不透明があれば境界
-                    let isBorder = checkNeighborOpaque(data: data, x: sx, y: sy, width: image.width, height: image.height, step: max(stepX, stepY))
-                    if isBorder {
+                    if checkNeighborOpaque(data: data, x: sx, y: sy, width: image.width, height: image.height, step: max(stepX, stepY)) {
                         let displayX = displayRect.origin.x + CGFloat(sx) * scaleX
                         let displayY = displayRect.origin.y + CGFloat(sy) * scaleY
-                        let dotSize = max(scaleX, scaleY) * CGFloat(max(stepX, stepY))
-                        path.addRect(CGRect(x: displayX, y: displayY, width: dotSize, height: dotSize))
+                        path.addRect(CGRect(x: displayX, y: displayY, width: dotW, height: dotH))
                     }
                 }
             }
@@ -774,7 +915,7 @@ class ScrollZoomNSView: NSView {
     override func scrollWheel(with event: NSEvent) {
         guard let viewModel = viewModel else { return }
 
-        // ピンチズーム（トラックパッド）
+        // トラックパッドのピンチ or スクロール
         if event.phase == .changed || event.momentumPhase == .changed {
             let delta = event.scrollingDeltaY * 0.01
             Task { @MainActor in
