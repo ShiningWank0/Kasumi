@@ -237,7 +237,7 @@ class TrimProcessor {
 // MARK: - Background Remover
 
 /// 背景透明化処理（フラッドフィル方式）
-class BackgroundRemover {
+nonisolated class BackgroundRemover {
     
     private let sourceImage: CGImage
     private let width: Int
