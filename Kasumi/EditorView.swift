@@ -225,6 +225,7 @@ class EditorViewModel: ObservableObject {
 
     func resetZoom() {
         zoomScale = 1.0
+        baseZoomScale = 1.0
         panOffset = .zero
     }
 
@@ -550,7 +551,6 @@ struct CanvasView: View {
 
     @State private var currentPath: [CGPoint] = []
     @State private var selectionRect: CGRect = .zero
-    @State private var lastPanOffset: CGSize = .zero
 
     var body: some View {
         GeometryReader { geometry in
@@ -620,7 +620,6 @@ struct CanvasView: View {
             .contentShape(Rectangle())
             .gesture(editGesture(in: geometry.size))
             .simultaneousGesture(magnifyGesture())
-            .simultaneousGesture(panGesture())
             .onHover { hovering in
                 if viewModel.selectedTool == .backgroundRemoval && hovering {
                     NSCursor.crosshair.push()
@@ -690,20 +689,6 @@ struct CanvasView: View {
             }
             .onEnded { _ in
                 viewModel.baseZoomScale = viewModel.zoomScale
-            }
-    }
-
-    private func panGesture() -> some Gesture {
-        DragGesture(minimumDistance: 5)
-            .modifiers(.command)
-            .onChanged { value in
-                viewModel.panOffset = CGSize(
-                    width: lastPanOffset.width + value.translation.width,
-                    height: lastPanOffset.height + value.translation.height
-                )
-            }
-            .onEnded { _ in
-                lastPanOffset = viewModel.panOffset
             }
     }
 
@@ -915,14 +900,19 @@ class ScrollZoomNSView: NSView {
     override func scrollWheel(with event: NSEvent) {
         guard let viewModel = viewModel else { return }
 
-        // トラックパッドのピンチ or スクロール
+        // トラックパッドの2本指スクロール → 拡大中ならパン移動
         if event.phase == .changed || event.momentumPhase == .changed {
-            let delta = event.scrollingDeltaY * 0.01
             Task { @MainActor in
-                viewModel.adjustZoom(by: delta)
+                if viewModel.zoomScale > 1.0 {
+                    // 拡大中: 2本指スクロールでパン
+                    viewModel.panOffset = CGSize(
+                        width: viewModel.panOffset.width + event.scrollingDeltaX,
+                        height: viewModel.panOffset.height + event.scrollingDeltaY
+                    )
+                }
             }
         }
-        // マウスホイール
+        // マウスホイール（非トラックパッド）→ ズーム
         else if event.phase == [] && event.momentumPhase == [] {
             let delta = event.scrollingDeltaY * 0.05
             Task { @MainActor in
