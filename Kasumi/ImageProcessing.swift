@@ -42,9 +42,7 @@ class MosaicProcessor {
     
     /// 矩形範囲にモザイクを適用
     func applyMosaic(in rect: CGRect, effect: MosaicEffect, blockSize: Int = 20) -> CGImage {
-        guard let sourceCIImage = CIImage(cgImage: sourceImage) else {
-            return sourceImage
-        }
+        let sourceCIImage = CIImage(cgImage: sourceImage)
         
         // エフェクトを適用した画像全体を作成
         let filteredImage: CIImage
@@ -84,9 +82,7 @@ class MosaicProcessor {
     /// ストローク範囲にモザイクを適用
     func applyMosaicStroke(points: [CGPoint], brushSize: CGFloat, effect: MosaicEffect) -> CGImage {
         guard !points.isEmpty else { return sourceImage }
-        guard let sourceCIImage = CIImage(cgImage: sourceImage) else {
-            return sourceImage
-        }
+        let sourceCIImage = CIImage(cgImage: sourceImage)
         
         // エフェクトを画像全体に適用
         let filteredImage: CIImage

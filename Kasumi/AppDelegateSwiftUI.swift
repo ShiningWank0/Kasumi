@@ -7,6 +7,7 @@
 
 import Cocoa
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// アプリケーションのメインデリゲート
 /// グローバルショートカット、Dock挙動、アプリケーションライフサイクルを管理
@@ -81,9 +82,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func openEditorWindow(with url: URL) {
         do {
             let document = try KasumiDocument(contentsOf: url)
-            let editorVC = EditorViewController(document: document)
+            let editorView = EditorView(document: document)
+            let hostingController = NSHostingController(rootView: editorView)
             
-            let window = NSWindow(contentViewController: editorVC)
+            let window = NSWindow(contentViewController: hostingController)
             window.title = url.lastPathComponent
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
             window.setContentSize(NSSize(width: 1024, height: 768))
@@ -100,9 +102,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     private func openEditorWindow(with image: NSImage) {
         let document = KasumiDocument(image: image)
-        let editorVC = EditorViewController(document: document)
+        let editorView = EditorView(document: document)
+        let hostingController = NSHostingController(rootView: editorView)
         
-        let window = NSWindow(contentViewController: editorVC)
+        let window = NSWindow(contentViewController: hostingController)
         window.title = "Untitled"
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.setContentSize(NSSize(width: 1024, height: 768))

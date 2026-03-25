@@ -274,8 +274,9 @@ class CanvasView: NSView {
         
         switch currentTool {
         case .trim, .mosaicRect:
-            guard let path = selectionPath, let cgPath = path.cgPath as CGPath?,
-                  let startPoint = cgPath.currentPoint else { return }
+            guard let path = selectionPath else { return }
+            let cgPath = path.cgPath
+            let startPoint = cgPath.currentPoint
             
             let rect = CGRect(
                 x: min(startPoint.x, location.x),

@@ -95,9 +95,11 @@ struct ContentView: View {
     }
     
     private func openEditorWindow(with document: KasumiDocument, title: String) {
-        let editorVC = EditorViewController(document: document)
+        // SwiftUIのEditorViewを新しいウィンドウで開く
+        let editorView = EditorView(document: document)
+        let hostingController = NSHostingController(rootView: editorView)
         
-        let window = NSWindow(contentViewController: editorVC)
+        let window = NSWindow(contentViewController: hostingController)
         window.title = title
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.setContentSize(NSSize(width: 1024, height: 768))
@@ -135,31 +137,8 @@ struct ShortcutHintView: View {
     ContentView()
         .frame(width: 450, height: 600)
 }
-// MARK: - SwiftUI Wrapper for EditorViewController
-
-struct EditorView: View {
-    let document: KasumiDocument
-    
-    var body: some View {
-        EditorViewControllerRepresentable(document: document)
-            .frame(minWidth: 800, minHeight: 600)
-    }
-}
-
-struct EditorViewControllerRepresentable: NSViewControllerRepresentable {
-    let document: KasumiDocument
-    
-    func makeNSViewController(context: Context) -> EditorViewController {
-        return EditorViewController(document: document)
-    }
-    
-    func updateNSViewController(_ nsViewController: EditorViewController, context: Context) {
-        // 必要に応じて更新処理を追加
-    }
-}
 
 #Preview("Editor View - With Sample Image") {
-    // プレビュー用のサンプル画像を作成
     let sampleImage = createSampleImage()
     let document = KasumiDocument(image: sampleImage)
     

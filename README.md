@@ -7,7 +7,7 @@
 | アプリ名 | Kasumi |
 | プラットフォーム | macOS 13 Ventura 以上 |
 | 言語 | Swift 5.9+ |
-| UIフレームワーク | AppKit（一部SwiftUI併用可） |
+| UIフレームワーク | SwiftUI |
 | 配布 | GitHub OSS・無料 |
 | ライセンス | MIT（予定） |
 | ローカル処理 | 完全ローカル・ネット通信なし |
@@ -264,7 +264,7 @@ mouseDragged イベント
 
 | カテゴリ | 採用技術 | 理由 |
 |---------|---------|------|
-| UIフレームワーク | AppKit | カスタムキャンバスの制御精度 |
+| UIフレームワーク | SwiftUI | モダンな宣言的UI、高速プレビュー |
 | 画像処理 | Core Image + Metal | GPU実行・高速 |
 | PDF処理 | PDFKit + CoreGraphics | Apple標準・信頼性高い |
 | 背景透明化 | 自前BFS（Swift） | 完全ローカル・軽量 |
@@ -396,6 +396,7 @@ Kasumi/
 ├── KasumiApp.swift           # SwiftUIアプリのエントリーポイント
 ├── AppDelegateSwiftUI.swift  # グローバルショートカット管理
 ├── ContentView.swift          # メインウィンドウ（プレビュー可能✨）
+├── EditorView.swift           # エディタ画面（SwiftUI、プレビュー可能✨）
 ├── SettingsView.swift         # 設定画面（プレビュー可能✨）
 ├── EditorPreviews.swift       # エディタ関連プレビュー（プレビュー可能✨）
 │
@@ -405,9 +406,7 @@ Kasumi/
 │   ├── ImageProcessing.swift    # 画像処理（モザイク・トリミング等）
 │   └── Exporters.swift          # ファイル書き出し
 │
-├── UI Components (AppKit)/
-│   ├── EditorUI.swift           # エディタ、キャンバス、ツールバー
-│   ├── SettingsViewController.swift  # AppKit版設定画面
+├── Support/
 │   └── GlobalShortcutMonitor.swift   # ショートカット監視
 │
 └── Resources/
@@ -417,16 +416,16 @@ Kasumi/
 
 ### アーキテクチャ
 
-**ハイブリッドアプローチ（SwiftUI + AppKit）**
+**完全SwiftUIベース**
 
-- **SwiftUI**: メインウィンドウ、設定画面、プレビュー
-- **AppKit**: 高度な画像編集UI（キャンバス、ツールバー）
-- **ブリッジ**: `NSViewControllerRepresentable` でAppKitビューをSwiftUIに統合
+- **SwiftUI**: すべてのUI（メインウィンドウ、設定画面、エディタ）
+- **Core Image + Metal**: GPU加速画像処理
+- **Swift Concurrency**: 非同期処理（async/await）
 
 このアプローチにより：
-- 📱 SwiftUIの高速プレビューを活用
-- 🎨 AppKitの精密なカスタムビュー制御
-- 🔄 両方の利点を組み合わせた開発体験
+- 📱 SwiftUIの高速プレビューを最大限活用
+- 🎨 宣言的UIで保守性が高い
+- 🔄 モダンなSwift開発体験
 
 ### 開発ツール
 - エディタ: **Xcode**（メイン）
