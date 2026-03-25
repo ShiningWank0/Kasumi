@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		31AB16E72F73DB9C002056EB /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = 31AB16E62F73DB9C002056EB /* README.md */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		31AB16C82F73D198002056EB /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -24,9 +28,10 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		31AB16BA2F73D197002056EB /* Kasumi.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Kasumi.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		31AB16C72F73D198002056EB /* KasumiTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KasumiTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		31AB16D12F73D198002056EB /* KasumiUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KasumiUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		31AB16BA2F73D197002056EB /* Kasumi.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = Kasumi.app; path = /Users/taku/Desktop/Kasumi/build/Debug/Kasumi.app; sourceTree = "<absolute>"; };
+		31AB16C72F73D198002056EB /* KasumiTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; name = KasumiTests.xctest; path = /Users/taku/Desktop/Kasumi/build/Debug/Kasumi.app/Contents/PlugIns/KasumiTests.xctest; sourceTree = "<absolute>"; };
+		31AB16D12F73D198002056EB /* KasumiUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; name = KasumiUITests.xctest; path = "/Users/taku/Desktop/Kasumi/build/Debug/KasumiUITests-Runner.app/Contents/PlugIns/KasumiUITests.xctest"; sourceTree = "<absolute>"; };
+		31AB16E62F73DB9C002056EB /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -75,21 +80,11 @@
 		31AB16B12F73D197002056EB = {
 			isa = PBXGroup;
 			children = (
+				31AB16E62F73DB9C002056EB /* README.md */,
 				31AB16BC2F73D197002056EB /* Kasumi */,
 				31AB16CA2F73D198002056EB /* KasumiTests */,
 				31AB16D42F73D198002056EB /* KasumiUITests */,
-				31AB16BB2F73D197002056EB /* Products */,
 			);
-			sourceTree = "<group>";
-		};
-		31AB16BB2F73D197002056EB /* Products */ = {
-			isa = PBXGroup;
-			children = (
-				31AB16BA2F73D197002056EB /* Kasumi.app */,
-				31AB16C72F73D198002056EB /* KasumiTests.xctest */,
-				31AB16D12F73D198002056EB /* KasumiUITests.xctest */,
-			);
-			name = Products;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -196,7 +191,7 @@
 			mainGroup = 31AB16B12F73D197002056EB;
 			minimizedProjectReferenceProxies = 1;
 			preferredProjectObjectVersion = 77;
-			productRefGroup = 31AB16BB2F73D197002056EB /* Products */;
+			productRefGroup = 31AB16B12F73D197002056EB;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -212,6 +207,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				31AB16E72F73DB9C002056EB /* README.md in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
