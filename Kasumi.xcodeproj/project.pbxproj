@@ -34,21 +34,6 @@
 		31AB16EA2F73DC9C002056EB /* KasumiUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KasumiUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		31AB16F72F73DD80002056EB /* .gitignore */ = {isa = PBXFileReference; lastKnownFileType = text; path = .gitignore; sourceTree = "<group>"; };
 		31AB16F82F73DD84002056EB /* LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; path = LICENSE; sourceTree = "<group>"; };
-		31AB16F92F73DD88002056EB /* Package.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Package.swift; sourceTree = "<group>"; };
-		31AB16FA2F73DD8C002056EB /* SourcesAppKasumiApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourcesAppKasumiApp.swift; sourceTree = "<group>"; };
-		31AB16FB2F73DDAD002056EB /* SourcesAppAppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourcesAppAppDelegate.swift; sourceTree = "<group>"; };
-		31AB16FC2F73DDC4002056EB /* SourcesAppGlobalShortcutMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourcesAppGlobalShortcutMonitor.swift; sourceTree = "<group>"; };
-		31AB16FD2F73DDD7002056EB /* SourcesCoreDocumentKasumiDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourcesCoreDocumentKasumiDocument.swift; sourceTree = "<group>"; };
-		31AB16FE2F73DDE4002056EB /* SourcesCoreHistoryEditHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourcesCoreHistoryEditHistory.swift; sourceTree = "<group>"; };
-		31AB16FF2F73DDEF002056EB /* SourcesCoreExportImageExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourcesCoreExportImageExporter.swift; sourceTree = "<group>"; };
-		31AB17002F73DDF9002056EB /* SourcesCoreExportPDFExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourcesCoreExportPDFExporter.swift; sourceTree = "<group>"; };
-		31AB17012F73DE1A002056EB /* SourcesUISettingsSettingsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourcesUISettingsSettingsViewController.swift; sourceTree = "<group>"; };
-		31AB17022F73DE2D002056EB /* SourcesUIEditorEditorViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourcesUIEditorEditorViewController.swift; sourceTree = "<group>"; };
-		31AB17032F73DE4B002056EB /* SourcesUIEditorCanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourcesUIEditorCanvasView.swift; sourceTree = "<group>"; };
-		31AB17042F73DE60002056EB /* SourcesUIEditorToolbarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourcesUIEditorToolbarView.swift; sourceTree = "<group>"; };
-		31AB17052F73DE83002056EB /* SourcesCoreProcessingMosaicProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourcesCoreProcessingMosaicProcessor.swift; sourceTree = "<group>"; };
-		31AB17062F73DE8B002056EB /* SourcesCoreProcessingTrimProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourcesCoreProcessingTrimProcessor.swift; sourceTree = "<group>"; };
-		31AB17072F73DEA0002056EB /* SourcesCoreProcessingBackgroundRemover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourcesCoreProcessingBackgroundRemover.swift; sourceTree = "<group>"; };
 		31AB17082F73DEAD002056EB /* ResourcesInfo.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = ResourcesInfo.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -107,21 +92,6 @@
 				31AB16EA2F73DC9C002056EB /* KasumiUITests.xctest */,
 				31AB16F72F73DD80002056EB /* .gitignore */,
 				31AB16F82F73DD84002056EB /* LICENSE */,
-				31AB16F92F73DD88002056EB /* Package.swift */,
-				31AB16FA2F73DD8C002056EB /* SourcesAppKasumiApp.swift */,
-				31AB16FB2F73DDAD002056EB /* SourcesAppAppDelegate.swift */,
-				31AB16FC2F73DDC4002056EB /* SourcesAppGlobalShortcutMonitor.swift */,
-				31AB16FD2F73DDD7002056EB /* SourcesCoreDocumentKasumiDocument.swift */,
-				31AB16FE2F73DDE4002056EB /* SourcesCoreHistoryEditHistory.swift */,
-				31AB16FF2F73DDEF002056EB /* SourcesCoreExportImageExporter.swift */,
-				31AB17002F73DDF9002056EB /* SourcesCoreExportPDFExporter.swift */,
-				31AB17012F73DE1A002056EB /* SourcesUISettingsSettingsViewController.swift */,
-				31AB17022F73DE2D002056EB /* SourcesUIEditorEditorViewController.swift */,
-				31AB17032F73DE4B002056EB /* SourcesUIEditorCanvasView.swift */,
-				31AB17042F73DE60002056EB /* SourcesUIEditorToolbarView.swift */,
-				31AB17052F73DE83002056EB /* SourcesCoreProcessingMosaicProcessor.swift */,
-				31AB17062F73DE8B002056EB /* SourcesCoreProcessingTrimProcessor.swift */,
-				31AB17072F73DEA0002056EB /* SourcesCoreProcessingBackgroundRemover.swift */,
 				31AB17082F73DEAD002056EB /* ResourcesInfo.plist */,
 			);
 			sourceTree = "<group>";
