@@ -13,11 +13,20 @@ import Foundation
 // MARK: - Mosaic Effect Type
 
 /// モザイク・ぼかしエフェクトの種類
-enum MosaicEffect {
+enum MosaicEffect: CaseIterable {
     case classic        // クラシックモザイク
     case blur           // Gaussianぼかし
     case frostGlass     // フロストガラス
     case colorFill      // カラー塗りつぶし
+
+    var label: String {
+        switch self {
+        case .classic: return "モザイク"
+        case .blur: return "ぼかし"
+        case .frostGlass: return "フロストガラス"
+        case .colorFill: return "塗りつぶし"
+        }
+    }
 }
 
 // MARK: - Mosaic Processor
