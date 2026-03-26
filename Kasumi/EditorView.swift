@@ -89,6 +89,23 @@ struct EditorView: View {
                     .cornerRadius(12)
             }
         }
+        .overlay {
+            if let message = viewModel.toastMessage {
+                VStack {
+                    Spacer()
+                    Text(message)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 10)
+                        .background(Color.black.opacity(0.75))
+                        .cornerRadius(8)
+                        .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                    Spacer()
+                }
+                .animation(.easeInOut(duration: 0.3), value: viewModel.toastMessage)
+            }
+        }
     }
 
     private func toolbarSection(axis: Axis) -> some View {
@@ -114,6 +131,7 @@ class EditorViewModel: ObservableObject {
     @Published var isProcessing: Bool = false
     @Published var zoomScale: CGFloat = 1.0
     @Published var panOffset: CGSize = .zero
+    @Published var toastMessage: String?
 
     // モザイク設定
     @Published var mosaicBlockSize: Int = 20
@@ -444,13 +462,13 @@ class EditorViewModel: ObservableObject {
         guard document.sourceURL != nil else { showSavePanel(); return }
         do {
             try document.save()
+            showToast("上書き保存しました")
         } catch {
-            print("Save failed: \(error)")
+            showToast("保存に失敗しました")
         }
     }
 
     private func showSavePanel() {
-        // NSSavePanelの生成と表示はAppKit APIなので直接呼ぶ
         let panel = NSSavePanel()
         panel.canCreateDirectories = true
         panel.showsTagField = false
@@ -475,8 +493,19 @@ class EditorViewModel: ObservableObject {
             } else if let cgImage = document.cgImage {
                 try ImageExporter.export(cgImage, to: url)
             }
+            showToast("保存しました")
         } catch {
-            print("Save failed: \(error)")
+            showToast("保存に失敗しました")
+        }
+    }
+
+    private func showToast(_ message: String) {
+        toastMessage = message
+        Task {
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            withAnimation(.easeOut(duration: 0.3)) {
+                toastMessage = nil
+            }
         }
     }
 
