@@ -157,18 +157,88 @@ class EditorViewModel: ObservableObject {
         return .landscape
     }
 
+    var isPDF: Bool { document.type == .pdf }
+    var pdfDocument: PDFDocument? { document.pdfDocument }
+    var pdfPageCount: Int { document.pdfDocument?.pageCount ?? 0 }
+    @Published var currentPDFPageIndex: Int = 0
+
     init(document: KasumiDocument) {
         self.document = document
-        self.displayImage = document.image
+        if document.type == .pdf {
+            self.displayImage = rasterizePDFPage(at: 0)
+        } else {
+            self.displayImage = document.image
+        }
+        updateUndoRedoState()
+    }
+
+    /// PDFページをNSImageにラスタライズ
+    func rasterizePDFPage(at index: Int) -> NSImage? {
+        // 編集済みの画像がある場合はそちらを使う
+        if let editedCG = document.pdfPageImages[index] {
+            return NSImage(cgImage: editedCG, size: NSSize(width: editedCG.width, height: editedCG.height))
+        }
+        guard let pdf = document.pdfDocument, let page = pdf.page(at: index) else { return nil }
+        let bounds = page.bounds(for: .mediaBox)
+        let scale: CGFloat = 2.0
+        let size = CGSize(width: bounds.width * scale, height: bounds.height * scale)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        if let ctx = NSGraphicsContext.current?.cgContext {
+            ctx.setFillColor(NSColor.white.cgColor)
+            ctx.fill(CGRect(origin: .zero, size: size))
+            ctx.scaleBy(x: scale, y: scale)
+            page.draw(with: .mediaBox, to: ctx)
+        }
+        image.unlockFocus()
+        return image
+    }
+
+    func goToPDFPage(_ index: Int) {
+        guard isPDF, index >= 0, index < pdfPageCount else { return }
+        // プレビュー中なら取り消す
+        if isMosaicPreviewing { cancelMosaicPreview() }
+        currentPDFPageIndex = index
+        displayImage = rasterizePDFPage(at: index)
         updateUndoRedoState()
     }
 
     func applyEdit(_ result: NSImage) {
         if let cgImage = result.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-            document.updateImage(cgImage)
-            displayImage = result
+            if isPDF {
+                // 初回編集時：元のラスタライズ画像をページ画像として保存
+                if document.pdfPageImages[currentPDFPageIndex] == nil,
+                   let orig = rasterizeOriginalPDFPage(at: currentPDFPageIndex) {
+                    document.pdfPageImages[currentPDFPageIndex] = orig
+                    if document.pdfEditHistories[currentPDFPageIndex] == nil {
+                        document.pdfEditHistories[currentPDFPageIndex] = EditHistory()
+                    }
+                }
+                document.updatePDFPage(at: currentPDFPageIndex, with: cgImage)
+                displayImage = result
+            } else {
+                document.updateImage(cgImage)
+                displayImage = result
+            }
             updateUndoRedoState()
         }
+    }
+
+    /// 元のPDFページをラスタライズ（編集前の画像）
+    private func rasterizeOriginalPDFPage(at index: Int) -> CGImage? {
+        guard let pdf = document.pdfDocument, let page = pdf.page(at: index) else { return nil }
+        let bounds = page.bounds(for: .mediaBox)
+        let scale: CGFloat = 2.0
+        let w = Int(bounds.width * scale), h = Int(bounds.height * scale)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: colorSpace,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.setFillColor(NSColor.white.cgColor)
+        ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+        ctx.scaleBy(x: scale, y: scale)
+        // PDFKit draws with bottom-left origin, matching CGContext
+        page.draw(with: .mediaBox, to: ctx)
+        return ctx.makeImage()
     }
 
     // MARK: - Background Removal with Preview
@@ -332,16 +402,33 @@ class EditorViewModel: ObservableObject {
     func undo() {
         if bgPreviewImage != nil { cancelBackgroundRemoval(); return }
         if isMosaicPreviewing { cancelMosaicPreview(); return }
-        if let previousImage = document.undo() {
-            displayImage = NSImage(cgImage: previousImage, size: NSSize(width: previousImage.width, height: previousImage.height))
-            updateUndoRedoState()
+
+        if isPDF {
+            guard let current = displayImage?.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+            if let prev = document.undoPDFPage(at: currentPDFPageIndex, currentImage: current) {
+                displayImage = NSImage(cgImage: prev, size: NSSize(width: prev.width, height: prev.height))
+                updateUndoRedoState()
+            }
+        } else {
+            if let previousImage = document.undo() {
+                displayImage = NSImage(cgImage: previousImage, size: NSSize(width: previousImage.width, height: previousImage.height))
+                updateUndoRedoState()
+            }
         }
     }
 
     func redo() {
-        if let nextImage = document.redo() {
-            displayImage = NSImage(cgImage: nextImage, size: NSSize(width: nextImage.width, height: nextImage.height))
-            updateUndoRedoState()
+        if isPDF {
+            guard let current = displayImage?.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+            if let next = document.redoPDFPage(at: currentPDFPageIndex, currentImage: current) {
+                displayImage = NSImage(cgImage: next, size: NSSize(width: next.width, height: next.height))
+                updateUndoRedoState()
+            }
+        } else {
+            if let nextImage = document.redo() {
+                displayImage = NSImage(cgImage: nextImage, size: NSSize(width: nextImage.width, height: nextImage.height))
+                updateUndoRedoState()
+            }
         }
     }
 
@@ -354,8 +441,13 @@ class EditorViewModel: ObservableObject {
     }
 
     private func updateUndoRedoState() {
-        canUndo = document.canUndo
-        canRedo = document.canRedo
+        if isPDF {
+            canUndo = document.canUndoPDFPage(at: currentPDFPageIndex)
+            canRedo = document.canRedoPDFPage(at: currentPDFPageIndex)
+        } else {
+            canUndo = document.canUndo
+            canRedo = document.canRedo
+        }
     }
 
     // MARK: - Coordinate Conversion
@@ -423,11 +515,36 @@ struct ToolbarView: View {
         VStack(spacing: 6) {
             Spacer(minLength: 0)
 
-            fullWidthButton("切り抜き", icon: "crop", active: viewModel.selectedTool == .trim) {
-                viewModel.selectedTool = viewModel.selectedTool == .trim ? .none : .trim
-            }
-            .keyboardShortcut(KeyEquivalent(Character(trimKey)), modifiers: [])
+            // PDFページナビゲーション
+            if viewModel.isPDF && viewModel.pdfPageCount > 1 {
+                HStack(spacing: 4) {
+                    Button(action: { viewModel.goToPDFPage(viewModel.currentPDFPageIndex - 1) }) {
+                        Image(systemName: "chevron.left")
+                    }
+                    .disabled(viewModel.currentPDFPageIndex <= 0)
+                    .buttonStyle(.bordered)
 
+                    Text("\(viewModel.currentPDFPageIndex + 1) / \(viewModel.pdfPageCount)")
+                        .font(.caption).monospacedDigit()
+
+                    Button(action: { viewModel.goToPDFPage(viewModel.currentPDFPageIndex + 1) }) {
+                        Image(systemName: "chevron.right")
+                    }
+                    .disabled(viewModel.currentPDFPageIndex >= viewModel.pdfPageCount - 1)
+                    .buttonStyle(.bordered)
+                }
+                Divider()
+            }
+
+            // 切り抜き（画像のみ）
+            if !viewModel.isPDF {
+                fullWidthButton("切り抜き", icon: "crop", active: viewModel.selectedTool == .trim) {
+                    viewModel.selectedTool = viewModel.selectedTool == .trim ? .none : .trim
+                }
+                .keyboardShortcut(KeyEquivalent(Character(trimKey)), modifiers: [])
+            }
+
+            // モザイク（画像・PDF共通）
             fullWidthButton("モザイク", icon: "square.on.square", active: isMosaicActive) {
                 showMosaicSub.toggle()
                 if !showMosaicSub && isMosaicActive { viewModel.selectedTool = .none }
@@ -435,7 +552,6 @@ struct ToolbarView: View {
             .keyboardShortcut(KeyEquivalent(Character(mosaicKey)), modifiers: [])
 
             if showMosaicSub || isMosaicActive {
-                // 範囲 / ブラシ — 2つで1ボタン分の幅
                 HStack(spacing: 2) {
                     subButton("範囲", icon: "rectangle.dashed", active: viewModel.selectedTool == .mosaicRect) {
                         viewModel.selectedTool = .mosaicRect
@@ -479,35 +595,39 @@ struct ToolbarView: View {
                 }
             }
 
-            fullWidthButton("背景透過", icon: "wand.and.stars", active: viewModel.selectedTool == .backgroundRemoval) {
-                viewModel.selectedTool = viewModel.selectedTool == .backgroundRemoval ? .none : .backgroundRemoval
-            }
-            .keyboardShortcut(KeyEquivalent(Character(bgRemovalKey)), modifiers: [])
+            // 背景透過（画像のみ）
+            if !viewModel.isPDF {
+                fullWidthButton("背景透過", icon: "wand.and.stars", active: viewModel.selectedTool == .backgroundRemoval) {
+                    viewModel.selectedTool = viewModel.selectedTool == .backgroundRemoval ? .none : .backgroundRemoval
+                }
+                .keyboardShortcut(KeyEquivalent(Character(bgRemovalKey)), modifiers: [])
 
-            // 背景透過の色範囲設定（背景透過と元に戻すの間）
-            if viewModel.selectedTool == .backgroundRemoval || viewModel.bgPreviewImage != nil {
-                VStack(spacing: 4) {
-                    HStack(spacing: 4) {
-                        Text("色範囲").font(.system(size: 9)).foregroundColor(.secondary)
-                        Spacer()
-                        editableNumberField(value: $viewModel.bgTolerance, range: 1...100)
-                            .font(.system(size: 9))
+                if viewModel.selectedTool == .backgroundRemoval || viewModel.bgPreviewImage != nil {
+                    VStack(spacing: 4) {
+                        HStack(spacing: 4) {
+                            Text("色範囲").font(.system(size: 9)).foregroundColor(.secondary)
+                            Spacer()
+                            editableNumberField(value: $viewModel.bgTolerance, range: 1...100)
+                                .font(.system(size: 9))
+                        }
+                        Slider(value: Binding(
+                            get: { Double(viewModel.bgTolerance) },
+                            set: { viewModel.bgTolerance = Int($0) }
+                        ), in: 1...100, step: 1)
+                            .controlSize(.small)
                     }
-                    Slider(value: Binding(
-                        get: { Double(viewModel.bgTolerance) },
-                        set: { viewModel.bgTolerance = Int($0) }
-                    ), in: 1...100, step: 1)
-                        .controlSize(.small)
                 }
             }
 
-            if viewModel.zoomScale > 1.0 || viewModel.panOffset != .zero {
+            // 表示リセット（画像のみ）
+            if !viewModel.isPDF && (viewModel.zoomScale > 1.0 || viewModel.panOffset != .zero) {
                 Divider()
                 fullWidthButton("表示リセット", icon: "arrow.up.left.and.arrow.down.right", active: false) {
                     viewModel.resetZoom()
                 }
             }
 
+            // モザイクプレビュー確定/取消（画像・PDF共通）
             if viewModel.isMosaicPreviewing {
                 Divider()
                 fullWidthButton("適用", icon: "checkmark.circle.fill", active: false, prominent: true, tint: .green) {
@@ -520,7 +640,8 @@ struct ToolbarView: View {
                 .keyboardShortcut(.escape, modifiers: [])
             }
 
-            if viewModel.bgPreviewImage != nil {
+            // 背景透過プレビュー確定/取消（画像のみ）
+            if !viewModel.isPDF && viewModel.bgPreviewImage != nil {
                 Divider()
                 fullWidthButton("適用", icon: "checkmark.circle.fill", active: false, prominent: true, tint: .green) {
                     viewModel.confirmBackgroundRemoval()
@@ -534,6 +655,7 @@ struct ToolbarView: View {
 
             Divider()
 
+            // UNDO/REDO（画像・PDF共通）
             fullWidthButton("元に戻す", icon: "arrow.uturn.backward", active: false) {
                 viewModel.undo()
             }
@@ -578,7 +700,32 @@ struct ToolbarView: View {
         HStack(spacing: 8) {
             Spacer(minLength: 0)
 
-            toolButton(for: .trim, icon: "crop", label: "切り抜き", shortcutKey: trimKey)
+            // PDFページナビゲーション
+            if viewModel.isPDF && viewModel.pdfPageCount > 1 {
+                Button(action: { viewModel.goToPDFPage(viewModel.currentPDFPageIndex - 1) }) {
+                    Image(systemName: "chevron.left")
+                }
+                .disabled(viewModel.currentPDFPageIndex <= 0)
+                .buttonStyle(.bordered)
+
+                Text("\(viewModel.currentPDFPageIndex + 1) / \(viewModel.pdfPageCount)")
+                    .font(.caption).monospacedDigit()
+
+                Button(action: { viewModel.goToPDFPage(viewModel.currentPDFPageIndex + 1) }) {
+                    Image(systemName: "chevron.right")
+                }
+                .disabled(viewModel.currentPDFPageIndex >= viewModel.pdfPageCount - 1)
+                .buttonStyle(.bordered)
+
+                divider
+            }
+
+            // 切り抜き（画像のみ）
+            if !viewModel.isPDF {
+                toolButton(for: .trim, icon: "crop", label: "切り抜き", shortcutKey: trimKey)
+            }
+
+            // モザイク（画像・PDF共通）
             mosaicParentButton
 
             if showMosaicSub || isMosaicActive {
@@ -604,17 +751,20 @@ struct ToolbarView: View {
                 }
             }
 
-            toolButton(for: .backgroundRemoval, icon: "wand.and.stars", label: "背景透過", shortcutKey: bgRemovalKey)
+            // 背景透過（画像のみ）
+            if !viewModel.isPDF {
+                toolButton(for: .backgroundRemoval, icon: "wand.and.stars", label: "背景透過", shortcutKey: bgRemovalKey)
 
-            // 背景透過設定（背景透過と元に戻すの間）
-            if viewModel.selectedTool == .backgroundRemoval || viewModel.bgPreviewImage != nil {
-                inlineSlider(label: "色範囲", value: Binding(
-                    get: { Double(viewModel.bgTolerance) },
-                    set: { viewModel.bgTolerance = Int($0) }
-                ), range: 1...100, intValue: $viewModel.bgTolerance)
+                if viewModel.selectedTool == .backgroundRemoval || viewModel.bgPreviewImage != nil {
+                    inlineSlider(label: "色範囲", value: Binding(
+                        get: { Double(viewModel.bgTolerance) },
+                        set: { viewModel.bgTolerance = Int($0) }
+                    ), range: 1...100, intValue: $viewModel.bgTolerance)
+                }
             }
 
-            if viewModel.zoomScale > 1.0 || viewModel.panOffset != .zero {
+            // 表示リセット（画像のみ）
+            if !viewModel.isPDF && (viewModel.zoomScale > 1.0 || viewModel.panOffset != .zero) {
                 divider
                 Button(action: { viewModel.resetZoom() }) {
                     Label("表示リセット", systemImage: "arrow.up.left.and.arrow.down.right")
@@ -622,6 +772,7 @@ struct ToolbarView: View {
                 }.buttonStyle(.bordered)
             }
 
+            // モザイクプレビュー確定/取消（画像・PDF共通）
             if viewModel.isMosaicPreviewing {
                 divider
                 Button(action: { viewModel.confirmMosaicPreview() }) {
@@ -634,7 +785,8 @@ struct ToolbarView: View {
                 }.buttonStyle(.bordered).keyboardShortcut(.escape, modifiers: [])
             }
 
-            if viewModel.bgPreviewImage != nil {
+            // 背景透過プレビュー確定/取消（画像のみ）
+            if !viewModel.isPDF && viewModel.bgPreviewImage != nil {
                 divider
                 Button(action: { viewModel.confirmBackgroundRemoval() }) {
                     Label("適用", systemImage: "checkmark.circle.fill")
@@ -648,6 +800,7 @@ struct ToolbarView: View {
 
             divider
 
+            // UNDO/REDO（画像・PDF共通）
             Button(action: { viewModel.undo() }) {
                 Label("元に戻す", systemImage: "arrow.uturn.backward")
                     .font(.caption).frame(minHeight: 32)
@@ -856,24 +1009,13 @@ struct CanvasView: View {
 
                         // モザイクプレビューの選択範囲フチ（赤色で点滅）
                         if viewModel.isMosaicPreviewing && viewModel.bgBorderVisible {
-                            if viewModel.mosaicPreviewIsStroke {
-                                // ブラシ: ストロークのパス外枠
-                                Path { path in
-                                    let pts = viewModel.mosaicViewPoints
-                                    guard !pts.isEmpty else { return }
-                                    path.move(to: pts[0])
-                                    for pt in pts.dropFirst() { path.addLine(to: pt) }
-                                }
-                                .stroke(Color.red, style: StrokeStyle(lineWidth: max(viewModel.mosaicBrushSize * displayInfo.scale * 0.05, 3), lineCap: .round, lineJoin: .round))
-                                .allowsHitTesting(false)
-                            } else {
-                                // 範囲: 矩形の外枠
-                                Rectangle()
-                                    .stroke(Color.red, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
-                                    .frame(width: viewModel.mosaicViewRect.width, height: viewModel.mosaicViewRect.height)
-                                    .position(x: viewModel.mosaicViewRect.midX, y: viewModel.mosaicViewRect.midY)
-                                    .allowsHitTesting(false)
-                            }
+                            MosaicSelectionBorderOverlay(
+                                isStroke: viewModel.mosaicPreviewIsStroke,
+                                imageRect: viewModel.mosaicPreviewRect,
+                                imagePoints: viewModel.mosaicPreviewPoints,
+                                brushSize: viewModel.mosaicBrushSize,
+                                displayInfo: displayInfo
+                            )
                         }
                     }
                 }
@@ -1015,6 +1157,7 @@ struct CanvasView: View {
 
         switch viewModel.selectedTool {
         case .trim:
+            guard !viewModel.isPDF else { break }
             let imageRect = convertRectToImageCoordinates(selectionRect, viewSize: size, imageSize: imageSize)
             if let processor = TrimProcessor(image: cgImage) {
                 let result = processor.trim(to: imageRect)
@@ -1032,6 +1175,7 @@ struct CanvasView: View {
             viewModel.startMosaicPreview(originalImage: image, cgImage: cgImage, rect: nil, points: imagePoints, isStroke: true)
 
         case .backgroundRemoval:
+            guard !viewModel.isPDF else { break }
             viewModel.performBackgroundRemoval(at: value.location, viewSize: size)
 
         default:
@@ -1135,7 +1279,79 @@ struct TransparencyBorderOverlay: View {
     }
 }
 
+// MARK: - Mosaic Selection Border Overlay
+
+struct MosaicSelectionBorderOverlay: View {
+    let isStroke: Bool
+    let imageRect: CGRect
+    let imagePoints: [CGPoint]
+    let brushSize: CGFloat
+    let displayInfo: (origin: CGPoint, scale: CGFloat, displaySize: CGSize)
+
+    var body: some View {
+        if isStroke {
+            // ブラシ: 画像座標のパスをディスプレイ座標に変換して描画
+            Path { path in
+                let pts = imagePoints.map { imageToDisplay($0) }
+                guard !pts.isEmpty else { return }
+                path.move(to: pts[0])
+                for pt in pts.dropFirst() { path.addLine(to: pt) }
+            }
+            .stroke(Color.red, style: StrokeStyle(
+                lineWidth: max(brushSize * displayInfo.scale * 0.05, 2),
+                lineCap: .round, lineJoin: .round
+            ))
+            .allowsHitTesting(false)
+        } else {
+            // 範囲: 画像座標の矩形をディスプレイ座標に変換
+            let displayRect = imageRectToDisplay(imageRect)
+            Rectangle()
+                .stroke(Color.red, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
+                .frame(width: displayRect.width, height: displayRect.height)
+                .position(x: displayRect.midX, y: displayRect.midY)
+                .allowsHitTesting(false)
+        }
+    }
+
+    private func imageToDisplay(_ pt: CGPoint) -> CGPoint {
+        CGPoint(
+            x: displayInfo.origin.x + pt.x * displayInfo.scale,
+            y: displayInfo.origin.y + pt.y * displayInfo.scale
+        )
+    }
+
+    private func imageRectToDisplay(_ rect: CGRect) -> CGRect {
+        CGRect(
+            x: displayInfo.origin.x + rect.origin.x * displayInfo.scale,
+            y: displayInfo.origin.y + rect.origin.y * displayInfo.scale,
+            width: rect.width * displayInfo.scale,
+            height: rect.height * displayInfo.scale
+        )
+    }
+}
+
 // MARK: - Checkerboard View (transparency indicator)
+
+// MARK: - PDFKit View (NSViewRepresentable)
+
+struct PDFKitView: NSViewRepresentable {
+    let pdfDocument: PDFDocument
+
+    func makeNSView(context: Context) -> PDFView {
+        let pdfView = PDFView()
+        pdfView.document = pdfDocument
+        pdfView.autoScales = true
+        pdfView.displayMode = .singlePageContinuous
+        pdfView.backgroundColor = .clear
+        return pdfView
+    }
+
+    func updateNSView(_ pdfView: PDFView, context: Context) {
+        if pdfView.document !== pdfDocument {
+            pdfView.document = pdfDocument
+        }
+    }
+}
 
 struct CheckerboardView: View {
     let squareSize: CGFloat = 10
