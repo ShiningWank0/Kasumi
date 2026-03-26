@@ -260,7 +260,7 @@ class TrimProcessor {
 
 /// 背景透明化処理（フラッドフィル方式）
 /// 修正: ピクセルデータのライフサイクル管理、BFSの効率化
-nonisolated class BackgroundRemover {
+class BackgroundRemover: @unchecked Sendable {
 
     private let sourceImage: CGImage
     private let width: Int
