@@ -140,7 +140,7 @@ class EditorViewModel: ObservableObject {
     var mosaicViewRect: CGRect = .zero
     var mosaicViewPoints: [CGPoint] = []
 
-    private let document: KasumiDocument
+    let document: KasumiDocument
     private var backgroundTask: Task<Void, Never>?
     private var blinkTimer: Timer?
     /// ズーム前のスケール（ピンチ開始時）
@@ -433,8 +433,48 @@ class EditorViewModel: ObservableObject {
     }
 
     func save() {
+        showSavePanel()
+    }
+
+    func saveAs() {
+        showSavePanel()
+    }
+
+    func overwriteSave() {
+        guard document.sourceURL != nil else { showSavePanel(); return }
         do {
             try document.save()
+        } catch {
+            print("Save failed: \(error)")
+        }
+    }
+
+    private func showSavePanel() {
+        // NSSavePanelの生成と表示はAppKit APIなので直接呼ぶ
+        let panel = NSSavePanel()
+        panel.canCreateDirectories = true
+        panel.showsTagField = false
+
+        let docIsPDF = isPDF
+        if docIsPDF {
+            panel.allowedContentTypes = [.pdf]
+            panel.nameFieldStringValue = (document.sourceURL?.deletingPathExtension().lastPathComponent ?? "Untitled") + "_edited.pdf"
+        } else {
+            panel.allowedContentTypes = [.png, .jpeg, .tiff]
+            let baseName = document.sourceURL?.deletingPathExtension().lastPathComponent ?? "Untitled"
+            let ext = UserDefaults.standard.string(forKey: "defaultExportFormat") ?? "png"
+            panel.nameFieldStringValue = baseName + "_edited." + ext
+        }
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            if docIsPDF {
+                if let pdf = document.pdfDocument {
+                    try PDFExporter.export(pdf, to: url)
+                }
+            } else if let cgImage = document.cgImage {
+                try ImageExporter.export(cgImage, to: url)
+            }
         } catch {
             print("Save failed: \(error)")
         }
@@ -670,10 +710,17 @@ struct ToolbarView: View {
 
             Divider()
 
-            fullWidthButton("保存", icon: "square.and.arrow.down", active: false, prominent: true) {
-                viewModel.save()
+            fullWidthButton("名前を付けて保存", icon: "square.and.arrow.down", active: false, prominent: true) {
+                viewModel.saveAs()
             }
             .keyboardShortcut("s", modifiers: .command)
+
+            if viewModel.document.sourceURL != nil {
+                fullWidthButton("上書き保存", icon: "square.and.arrow.down.on.square", active: false) {
+                    viewModel.overwriteSave()
+                }
+                .keyboardShortcut("s", modifiers: [.command, .shift])
+            }
 
             Spacer(minLength: 0)
         }
@@ -819,12 +866,21 @@ struct ToolbarView: View {
 
             divider
 
-            Button(action: { viewModel.save() }) {
+            Button(action: { viewModel.saveAs() }) {
                 Label("保存", systemImage: "square.and.arrow.down")
                     .font(.caption).frame(minHeight: 32)
             }
             .buttonStyle(.borderedProminent)
             .keyboardShortcut("s", modifiers: .command)
+
+            if viewModel.document.sourceURL != nil {
+                Button(action: { viewModel.overwriteSave() }) {
+                    Label("上書き", systemImage: "square.and.arrow.down.on.square")
+                        .font(.caption).frame(minHeight: 32)
+                }
+                .buttonStyle(.bordered)
+                .keyboardShortcut("s", modifiers: [.command, .shift])
+            }
 
             Spacer(minLength: 0)
         }
@@ -1000,9 +1056,9 @@ struct CanvasView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                         // 背景透過プレビューの境界線（赤色で点滅）
-                        if viewModel.bgPreviewImage != nil && viewModel.bgBorderVisible {
+                        if let bgPreview = viewModel.bgPreviewImage, viewModel.bgBorderVisible {
                             TransparencyBorderOverlay(
-                                previewImage: viewModel.bgPreviewImage!,
+                                previewImage: bgPreview,
                                 displayInfo: displayInfo
                             )
                         }
@@ -1217,43 +1273,41 @@ struct TransparencyBorderOverlay: View {
     }
 
     private func createTransparencyBorderPath(image: CGImage, displayRect: CGRect) -> Path {
-        let sampleWidth = min(image.width, 300)
-        let sampleHeight = min(image.height, 300)
-        let stepX = max(1, image.width / sampleWidth)
-        let stepY = max(1, image.height / sampleHeight)
+        let w = image.width, h = image.height
+        guard w > 0 && h > 0 else { return Path() }
 
+        let sampleWidth = min(w, 300)
+        let sampleHeight = min(h, 300)
+        let stepX = max(1, w / sampleWidth)
+        let stepY = max(1, h / sampleHeight)
+
+        let bytesPerRow = w * 4
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         guard let context = CGContext(
-            data: nil,
-            width: image.width,
-            height: image.height,
-            bitsPerComponent: 8,
-            bytesPerRow: image.width * 4,
+            data: nil, width: w, height: h,
+            bitsPerComponent: 8, bytesPerRow: bytesPerRow,
             space: colorSpace,
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else {
-            return Path()
-        }
+        ) else { return Path() }
 
-        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        context.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        guard let data = context.data?.assumingMemoryBound(to: UInt8.self) else { return Path() }
 
-        guard let data = context.data?.assumingMemoryBound(to: UInt8.self) else {
-            return Path()
-        }
-
+        let bufferSize = bytesPerRow * h
         var path = Path()
-        let scaleX = displayRect.width / CGFloat(image.width)
-        let scaleY = displayRect.height / CGFloat(image.height)
+        let scaleX = displayRect.width / CGFloat(w)
+        let scaleY = displayRect.height / CGFloat(h)
         let dotW = max(scaleX * CGFloat(stepX), 1.5)
         let dotH = max(scaleY * CGFloat(stepY), 1.5)
 
-        for sy in stride(from: 0, to: image.height, by: stepY) {
-            for sx in stride(from: 0, to: image.width, by: stepX) {
-                let offset = (sy * image.width + sx) * 4
+        for sy in stride(from: 0, to: h, by: stepY) {
+            for sx in stride(from: 0, to: w, by: stepX) {
+                let offset = (sy * w + sx) * 4
+                guard offset + 3 < bufferSize else { continue }
                 let alpha = data[offset + 3]
 
                 if alpha == 0 {
-                    if checkNeighborOpaque(data: data, x: sx, y: sy, width: image.width, height: image.height, step: max(stepX, stepY)) {
+                    if checkNeighborOpaque(data: data, x: sx, y: sy, width: w, height: h, step: max(stepX, stepY), bufferSize: bufferSize) {
                         let displayX = displayRect.origin.x + CGFloat(sx) * scaleX
                         let displayY = displayRect.origin.y + CGFloat(sy) * scaleY
                         path.addRect(CGRect(x: displayX, y: displayY, width: dotW, height: dotH))
@@ -1265,12 +1319,12 @@ struct TransparencyBorderOverlay: View {
         return path
     }
 
-    private func checkNeighborOpaque(data: UnsafeMutablePointer<UInt8>, x: Int, y: Int, width: Int, height: Int, step: Int) -> Bool {
+    private func checkNeighborOpaque(data: UnsafeMutablePointer<UInt8>, x: Int, y: Int, width: Int, height: Int, step: Int, bufferSize: Int) -> Bool {
         let neighbors = [(x - step, y), (x + step, y), (x, y - step), (x, y + step)]
         for (nx, ny) in neighbors {
-            // 画像の端は境界として扱う（フチを赤く表示する）
             guard nx >= 0 && nx < width && ny >= 0 && ny < height else { return true }
             let offset = (ny * width + nx) * 4
+            guard offset + 3 < bufferSize else { continue }
             if data[offset + 3] > 0 {
                 return true
             }
@@ -1290,17 +1344,11 @@ struct MosaicSelectionBorderOverlay: View {
 
     var body: some View {
         if isStroke {
-            // ブラシ: 画像座標のパスをディスプレイ座標に変換して描画
-            Path { path in
-                let pts = imagePoints.map { imageToDisplay($0) }
-                guard !pts.isEmpty else { return }
-                path.move(to: pts[0])
-                for pt in pts.dropFirst() { path.addLine(to: pt) }
+            // ブラシ: ストローク領域の正確な外枠を描画
+            Canvas { context, size in
+                let borderPath = computeStrokeBorderPath()
+                context.stroke(borderPath, with: .color(.red), style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
             }
-            .stroke(Color.red, style: StrokeStyle(
-                lineWidth: max(brushSize * displayInfo.scale * 0.05, 2),
-                lineCap: .round, lineJoin: .round
-            ))
             .allowsHitTesting(false)
         } else {
             // 範囲: 画像座標の矩形をディスプレイ座標に変換
@@ -1311,6 +1359,86 @@ struct MosaicSelectionBorderOverlay: View {
                 .position(x: displayRect.midX, y: displayRect.midY)
                 .allowsHitTesting(false)
         }
+    }
+
+    /// ブラシストローク領域の外枠パスを計算
+    /// 各ポイントを中心にbrushSize半径の円で覆われた領域のcontour
+    private func computeStrokeBorderPath() -> Path {
+        guard !imagePoints.isEmpty else { return Path() }
+
+        // ディスプレイ座標でのブラシ半径
+        let displayRadius = brushSize * displayInfo.scale / 2.0
+
+        // 各ポイントの円を合成したパスを作成
+        var combinedPath = CGMutablePath()
+        for pt in imagePoints {
+            let dp = imageToDisplay(pt)
+            let circle = CGPath(ellipseIn: CGRect(
+                x: dp.x - displayRadius,
+                y: dp.y - displayRadius,
+                width: displayRadius * 2,
+                height: displayRadius * 2
+            ), transform: nil)
+            combinedPath.addPath(circle)
+        }
+
+        // サンプリングで外枠を生成（ビットマップベース）
+        let bounds = combinedPath.boundingBox.insetBy(dx: -4, dy: -4)
+        guard bounds.width > 0 && bounds.height > 0 else { return Path() }
+
+        let sampleScale: CGFloat = 0.5 // 解像度を落として高速化
+        let w = Int(bounds.width * sampleScale)
+        let h = Int(bounds.height * sampleScale)
+        guard w > 0 && h > 0 else { return Path() }
+
+        // マスクを描画
+        let colorSpace = CGColorSpaceCreateDeviceGray()
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8,
+                                  bytesPerRow: w, space: colorSpace, bitmapInfo: 0) else { return Path() }
+        ctx.setFillColor(gray: 0, alpha: 1)
+        ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+        ctx.setFillColor(gray: 1, alpha: 1)
+        ctx.translateBy(x: -bounds.origin.x * sampleScale, y: -bounds.origin.y * sampleScale)
+        ctx.scaleBy(x: sampleScale, y: sampleScale)
+        ctx.addPath(combinedPath)
+        ctx.fillPath()
+
+        let bytesPerRow = ctx.bytesPerRow
+        guard let data = ctx.data?.assumingMemoryBound(to: UInt8.self) else { return Path() }
+        let bufferSize = bytesPerRow * h
+
+        // 境界ピクセルを抽出
+        var path = Path()
+        let invScale = 1.0 / sampleScale
+        let dotSize = max(invScale, 2.0)
+
+        for y in 0..<h {
+            for x in 0..<w {
+                let idx = y * bytesPerRow + x
+                guard idx < bufferSize else { continue }
+                if data[idx] > 128 {
+                    let neighbors = [(x-1,y),(x+1,y),(x,y-1),(x,y+1)]
+                    var isBorder = false
+                    for (nx, ny) in neighbors {
+                        if nx < 0 || nx >= w || ny < 0 || ny >= h {
+                            isBorder = true; break
+                        }
+                        let nIdx = ny * bytesPerRow + nx
+                        guard nIdx < bufferSize else { isBorder = true; break }
+                        if data[nIdx] <= 128 {
+                            isBorder = true; break
+                        }
+                    }
+                    if isBorder {
+                        let dx = bounds.origin.x + CGFloat(x) * invScale
+                        let dy = bounds.origin.y + CGFloat(y) * invScale
+                        path.addRect(CGRect(x: dx, y: dy, width: dotSize, height: dotSize))
+                    }
+                }
+            }
+        }
+
+        return path
     }
 
     private func imageToDisplay(_ pt: CGPoint) -> CGPoint {
