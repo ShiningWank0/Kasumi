@@ -40,28 +40,18 @@ class EditHistory {
         }
     }
     
-    /// Undo: 一つ前の状態に戻る
-    func undo() -> CGImage? {
+    /// Undo: currentImage を redoStack に保存し、前の状態を返す
+    func undo(currentImage: CGImage) -> CGImage? {
         guard !undoStack.isEmpty else { return nil }
-        
-        let previous = undoStack.removeLast()
-        if let current = undoStack.last {
-            redoStack.append(current)
-            return previous
-        }
-        
-        // undoStackが空になった場合は最初の状態
-        undoStack.append(previous)
-        return previous
+        redoStack.append(currentImage)
+        return undoStack.removeLast()
     }
-    
-    /// Redo: Undoした操作を再実行
-    func redo() -> CGImage? {
+
+    /// Redo: currentImage を undoStack に保存し、次の状態を返す
+    func redo(currentImage: CGImage) -> CGImage? {
         guard !redoStack.isEmpty else { return nil }
-        
-        let next = redoStack.removeLast()
-        undoStack.append(next)
-        return next
+        undoStack.append(currentImage)
+        return redoStack.removeLast()
     }
     
     var canUndo: Bool {

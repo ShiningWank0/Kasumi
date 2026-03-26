@@ -124,6 +124,14 @@ class EditorViewModel: ObservableObject {
     @Published var bgPreviewImage: CGImage?
     @Published var bgBorderVisible: Bool = true
 
+    // モザイクプレビュー用
+    @Published var mosaicPreviewImage: CGImage?
+    var mosaicOriginalImage: NSImage?
+    var mosaicPreviewRect: CGRect = .zero
+    var mosaicPreviewPoints: [CGPoint] = []
+    var mosaicPreviewIsStroke: Bool = false
+    var isMosaicPreviewing: Bool { mosaicPreviewImage != nil }
+
     private let document: KasumiDocument
     private var backgroundTask: Task<Void, Never>?
     private var blinkTimer: Timer?
@@ -198,6 +206,58 @@ class EditorViewModel: ObservableObject {
         bgBorderVisible = true
     }
 
+    // MARK: - Mosaic Preview
+
+    func startMosaicPreview(originalImage: NSImage, cgImage: CGImage, rect: CGRect?, points: [CGPoint]?, isStroke: Bool) {
+        mosaicOriginalImage = originalImage
+        mosaicPreviewIsStroke = isStroke
+        if let r = rect { mosaicPreviewRect = r }
+        if let p = points { mosaicPreviewPoints = p }
+        recomputeMosaicPreview(cgImage: cgImage)
+        startBorderBlink()
+    }
+
+    func recomputeMosaicPreview(cgImage: CGImage? = nil) {
+        let source: CGImage
+        if let cg = cgImage {
+            source = cg
+        } else if let orig = mosaicOriginalImage,
+                  let cg = orig.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+            source = cg
+        } else { return }
+
+        guard let processor = MosaicProcessor(image: source) else { return }
+        let result: CGImage
+        if mosaicPreviewIsStroke {
+            result = processor.applyMosaicStroke(points: mosaicPreviewPoints, brushSize: mosaicBrushSize, effect: selectedMosaicEffect)
+        } else {
+            result = processor.applyMosaic(in: mosaicPreviewRect, effect: selectedMosaicEffect, blockSize: mosaicBlockSize)
+        }
+        mosaicPreviewImage = result
+        displayImage = NSImage(cgImage: result, size: NSSize(width: result.width, height: result.height))
+    }
+
+    func confirmMosaicPreview() {
+        guard let preview = mosaicPreviewImage else { return }
+        if let original = mosaicOriginalImage { displayImage = original }
+        applyEdit(NSImage(cgImage: preview, size: NSSize(width: preview.width, height: preview.height)))
+        clearMosaicPreview()
+    }
+
+    func cancelMosaicPreview() {
+        if let original = mosaicOriginalImage { displayImage = original }
+        clearMosaicPreview()
+    }
+
+    private func clearMosaicPreview() {
+        mosaicPreviewImage = nil
+        mosaicOriginalImage = nil
+        mosaicPreviewRect = .zero
+        mosaicPreviewPoints = []
+        stopBorderBlink()
+        bgBorderVisible = true
+    }
+
     private func startBorderBlink() {
         stopBorderBlink()
         bgBorderVisible = true
@@ -228,11 +288,8 @@ class EditorViewModel: ObservableObject {
     // MARK: - Standard Operations
 
     func undo() {
-        // 背景透過プレビュー中はCmd+Zで取り消し
-        if bgPreviewImage != nil {
-            cancelBackgroundRemoval()
-            return
-        }
+        if bgPreviewImage != nil { cancelBackgroundRemoval(); return }
+        if isMosaicPreviewing { cancelMosaicPreview(); return }
         if let previousImage = document.undo() {
             displayImage = NSImage(cgImage: previousImage, size: NSSize(width: previousImage.width, height: previousImage.height))
             updateUndoRedoState()
@@ -311,186 +368,313 @@ struct ToolbarView: View {
     }
 
     var body: some View {
-        let layout = axis == .horizontal
-            ? AnyLayout(HStackLayout(spacing: 8))
-            : AnyLayout(VStackLayout(spacing: 8))
+        if axis == .vertical {
+            verticalToolbar
+        } else {
+            horizontalToolbar
+        }
+    }
 
-        layout {
+    // MARK: - 右側ツールバー（縦並び）— 全ボタン同じ幅
+
+    private var verticalToolbar: some View {
+        VStack(spacing: 6) {
             Spacer(minLength: 0)
 
-            // 切り抜き
-            toolButton(for: .trim, icon: "crop", label: "切り抜き", shortcutKey: trimKey)
+            fullWidthButton("切り抜き", icon: "crop", active: viewModel.selectedTool == .trim) {
+                viewModel.selectedTool = viewModel.selectedTool == .trim ? .none : .trim
+            }
+            .keyboardShortcut(KeyEquivalent(Character(trimKey)), modifiers: [])
 
-            // モザイク（親ボタン）
+            fullWidthButton("モザイク", icon: "square.on.square", active: isMosaicActive) {
+                showMosaicSub.toggle()
+                if !showMosaicSub && isMosaicActive { viewModel.selectedTool = .none }
+            }
+            .keyboardShortcut(KeyEquivalent(Character(mosaicKey)), modifiers: [])
+
+            if showMosaicSub || isMosaicActive {
+                // 範囲 / ブラシ — 2つで1ボタン分の幅
+                HStack(spacing: 2) {
+                    subButton("範囲", icon: "rectangle.dashed", active: viewModel.selectedTool == .mosaicRect) {
+                        viewModel.selectedTool = .mosaicRect
+                    }
+                    subButton("ブラシ", icon: "paintbrush", active: viewModel.selectedTool == .mosaicStroke) {
+                        viewModel.selectedTool = .mosaicStroke
+                    }
+                }
+            }
+
+            if isMosaicActive {
+                // モザイク設定 — ドロップダウン＋スライダー（ラベルと数値はスライダーの上下）
+                VStack(spacing: 4) {
+                    mosaicEffectPicker
+                    HStack(spacing: 4) {
+                        Text("粗さ").font(.system(size: 9))
+                        Spacer()
+                        Text("\(viewModel.mosaicBlockSize)").font(.system(size: 9)).monospacedDigit()
+                    }
+                    Slider(value: Binding(
+                        get: { Double(viewModel.mosaicBlockSize) },
+                        set: { viewModel.mosaicBlockSize = Int($0) }
+                    ), in: 5...80, step: 1)
+                        .controlSize(.small)
+                    if viewModel.selectedTool == .mosaicStroke {
+                        HStack(spacing: 4) {
+                            Text("太さ").font(.system(size: 9))
+                            Spacer()
+                            Text("\(Int(viewModel.mosaicBrushSize))").font(.system(size: 9)).monospacedDigit()
+                        }
+                        Slider(value: Binding(
+                            get: { Double(viewModel.mosaicBrushSize) },
+                            set: { viewModel.mosaicBrushSize = CGFloat($0) }
+                        ), in: 5...100, step: 1)
+                            .controlSize(.small)
+                    }
+                }
+            }
+
+            fullWidthButton("背景透過", icon: "wand.and.stars", active: viewModel.selectedTool == .backgroundRemoval) {
+                viewModel.selectedTool = viewModel.selectedTool == .backgroundRemoval ? .none : .backgroundRemoval
+            }
+            .keyboardShortcut(KeyEquivalent(Character(bgRemovalKey)), modifiers: [])
+
+            if viewModel.zoomScale > 1.0 || viewModel.panOffset != .zero {
+                Divider()
+                fullWidthButton("表示リセット", icon: "arrow.up.left.and.arrow.down.right", active: false) {
+                    viewModel.resetZoom()
+                }
+            }
+
+            if viewModel.isMosaicPreviewing {
+                Divider()
+                fullWidthButton("適用", icon: "checkmark.circle.fill", active: false, prominent: true, tint: .green) {
+                    viewModel.confirmMosaicPreview()
+                }
+                .keyboardShortcut(.return, modifiers: [])
+                fullWidthButton("取消", icon: "xmark.circle", active: false) {
+                    viewModel.cancelMosaicPreview()
+                }
+                .keyboardShortcut(.escape, modifiers: [])
+            }
+
+            if viewModel.bgPreviewImage != nil {
+                Divider()
+                fullWidthButton("適用", icon: "checkmark.circle.fill", active: false, prominent: true, tint: .green) {
+                    viewModel.confirmBackgroundRemoval()
+                }
+                .keyboardShortcut(.return, modifiers: [])
+                fullWidthButton("取消", icon: "xmark.circle", active: false) {
+                    viewModel.cancelBackgroundRemoval()
+                }
+                .keyboardShortcut(.escape, modifiers: [])
+            }
+
+            Divider()
+
+            fullWidthButton("元に戻す", icon: "arrow.uturn.backward", active: false) {
+                viewModel.undo()
+            }
+            .disabled(!viewModel.canUndo && viewModel.bgPreviewImage == nil && !viewModel.isMosaicPreviewing)
+            .keyboardShortcut("z", modifiers: .command)
+
+            fullWidthButton("やり直し", icon: "arrow.uturn.forward", active: false) {
+                viewModel.redo()
+            }
+            .disabled(!viewModel.canRedo)
+            .keyboardShortcut("z", modifiers: [.command, .shift])
+
+            Divider()
+
+            fullWidthButton("保存", icon: "square.and.arrow.down", active: false, prominent: true) {
+                viewModel.save()
+            }
+            .keyboardShortcut("s", modifiers: .command)
+
+            Spacer(minLength: 0)
+        }
+        .padding(8)
+        .frame(width: 160)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.95))
+        .onChange(of: viewModel.mosaicBlockSize) { _ in
+            if viewModel.isMosaicPreviewing { viewModel.recomputeMosaicPreview() }
+        }
+        .onChange(of: viewModel.selectedMosaicEffect) { _ in
+            if viewModel.isMosaicPreviewing { viewModel.recomputeMosaicPreview() }
+        }
+        .onChange(of: viewModel.mosaicBrushSize) { _ in
+            if viewModel.isMosaicPreviewing && viewModel.mosaicPreviewIsStroke { viewModel.recomputeMosaicPreview() }
+        }
+    }
+
+    // MARK: - 上側ツールバー（横並び）
+
+    private var horizontalToolbar: some View {
+        HStack(spacing: 8) {
+            Spacer(minLength: 0)
+
+            toolButton(for: .trim, icon: "crop", label: "切り抜き", shortcutKey: trimKey)
             mosaicParentButton
 
-            // 範囲 / ブラシ ボタン（モザイクと背景透過の間）
             if showMosaicSub || isMosaicActive {
                 mosaicSubButtons
             }
 
-            // モザイク設定（ドロップダウン・スライダー — 範囲/ブラシと背景透過の間）
             if isMosaicActive {
-                mosaicSettings
+                // ドロップダウン + 縦スライダー（横並び）
+                HStack(spacing: 4) {
+                    mosaicEffectPicker
+                    verticalSlider(label: "粗さ", value: Binding(
+                        get: { Double(viewModel.mosaicBlockSize) },
+                        set: { viewModel.mosaicBlockSize = Int($0) }
+                    ), range: 5...80, display: "\(viewModel.mosaicBlockSize)")
+                    if viewModel.selectedTool == .mosaicStroke {
+                        verticalSlider(label: "太さ", value: Binding(
+                            get: { Double(viewModel.mosaicBrushSize) },
+                            set: { viewModel.mosaicBrushSize = CGFloat($0) }
+                        ), range: 5...100, display: "\(Int(viewModel.mosaicBrushSize))")
+                    }
+                }
             }
 
-            // 背景透過
             toolButton(for: .backgroundRemoval, icon: "wand.and.stars", label: "背景透過", shortcutKey: bgRemovalKey)
 
-            // ズーム・パンリセット
             if viewModel.zoomScale > 1.0 || viewModel.panOffset != .zero {
                 divider
                 Button(action: { viewModel.resetZoom() }) {
                     Label("表示リセット", systemImage: "arrow.up.left.and.arrow.down.right")
-                        .font(.caption)
-                        .frame(minWidth: 80, minHeight: 32)
-                }
-                .buttonStyle(.bordered)
-                .help("ズーム・移動をリセット")
+                        .font(.caption).frame(minHeight: 32)
+                }.buttonStyle(.bordered)
             }
 
-            // 背景透過プレビュー中の確定/キャンセルボタン
+            if viewModel.isMosaicPreviewing {
+                divider
+                Button(action: { viewModel.confirmMosaicPreview() }) {
+                    Label("適用", systemImage: "checkmark.circle.fill")
+                        .font(.caption).frame(minHeight: 32)
+                }.buttonStyle(.borderedProminent).tint(.green).keyboardShortcut(.return, modifiers: [])
+                Button(action: { viewModel.cancelMosaicPreview() }) {
+                    Label("取消", systemImage: "xmark.circle")
+                        .font(.caption).frame(minHeight: 32)
+                }.buttonStyle(.bordered).keyboardShortcut(.escape, modifiers: [])
+            }
+
             if viewModel.bgPreviewImage != nil {
                 divider
                 Button(action: { viewModel.confirmBackgroundRemoval() }) {
                     Label("適用", systemImage: "checkmark.circle.fill")
-                        .font(.caption)
-                        .frame(minWidth: 60, minHeight: 32)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.green)
-                .keyboardShortcut(.return, modifiers: [])
-                .help("背景透過を適用 (Enter)")
-
+                        .font(.caption).frame(minHeight: 32)
+                }.buttonStyle(.borderedProminent).tint(.green).keyboardShortcut(.return, modifiers: [])
                 Button(action: { viewModel.cancelBackgroundRemoval() }) {
                     Label("取消", systemImage: "xmark.circle")
-                        .font(.caption)
-                        .frame(minWidth: 60, minHeight: 32)
-                }
-                .buttonStyle(.bordered)
-                .keyboardShortcut(.escape, modifiers: [])
-                .help("背景透過をキャンセル (Esc)")
+                        .font(.caption).frame(minHeight: 32)
+                }.buttonStyle(.bordered).keyboardShortcut(.escape, modifiers: [])
             }
 
             divider
 
             Button(action: { viewModel.undo() }) {
                 Label("元に戻す", systemImage: "arrow.uturn.backward")
-                    .font(.caption)
-                    .frame(minWidth: 70, minHeight: 32)
+                    .font(.caption).frame(minHeight: 32)
             }
             .buttonStyle(.bordered)
-            .disabled(!viewModel.canUndo)
+            .disabled(!viewModel.canUndo && viewModel.bgPreviewImage == nil && !viewModel.isMosaicPreviewing)
             .keyboardShortcut("z", modifiers: .command)
-            .help("元に戻す")
 
             Button(action: { viewModel.redo() }) {
                 Label("やり直し", systemImage: "arrow.uturn.forward")
-                    .font(.caption)
-                    .frame(minWidth: 70, minHeight: 32)
+                    .font(.caption).frame(minHeight: 32)
             }
             .buttonStyle(.bordered)
             .disabled(!viewModel.canRedo)
             .keyboardShortcut("z", modifiers: [.command, .shift])
-            .help("やり直し")
 
             divider
 
             Button(action: { viewModel.save() }) {
                 Label("保存", systemImage: "square.and.arrow.down")
-                    .font(.caption)
-                    .frame(minWidth: 60, minHeight: 32)
+                    .font(.caption).frame(minHeight: 32)
             }
             .buttonStyle(.borderedProminent)
             .keyboardShortcut("s", modifiers: .command)
-            .help("保存")
 
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, axis == .horizontal ? 10 : 6)
-        .padding(.vertical, axis == .horizontal ? 6 : 10)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.95))
+        .onChange(of: viewModel.mosaicBlockSize) { _ in
+            if viewModel.isMosaicPreviewing { viewModel.recomputeMosaicPreview() }
+        }
+        .onChange(of: viewModel.selectedMosaicEffect) { _ in
+            if viewModel.isMosaicPreviewing { viewModel.recomputeMosaicPreview() }
+        }
+        .onChange(of: viewModel.mosaicBrushSize) { _ in
+            if viewModel.isMosaicPreviewing && viewModel.mosaicPreviewIsStroke { viewModel.recomputeMosaicPreview() }
+        }
     }
 
-    // MARK: - Mosaic Parent Button
+    // MARK: - 縦ツールバー用ボタン（親の幅いっぱいに広がる）
+
+    @ViewBuilder
+    private func fullWidthButton(_ label: String, icon: String, active: Bool, prominent: Bool = false, tint: Color? = nil, action: @escaping () -> Void) -> some View {
+        if prominent {
+            Button(action: action) {
+                Label(label, systemImage: icon)
+                    .font(.caption)
+                    .frame(maxWidth: .infinity, minHeight: 28)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(tint)
+        } else {
+            Button(action: action) {
+                Label(label, systemImage: icon)
+                    .font(.caption)
+                    .frame(maxWidth: .infinity, minHeight: 28)
+            }
+            .buttonStyle(.bordered)
+            .tint(active ? .accentColor : nil)
+        }
+    }
+
+    private func subButton(_ label: String, icon: String, active: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(label, systemImage: icon)
+                .font(.caption2)
+                .frame(maxWidth: .infinity, minHeight: 24)
+        }
+        .buttonStyle(.bordered)
+        .tint(active ? .accentColor : nil)
+    }
+
+    // MARK: - 横ツールバー用パーツ
 
     private var mosaicParentButton: some View {
         Button(action: {
             showMosaicSub.toggle()
-            if !showMosaicSub && isMosaicActive {
-                viewModel.selectedTool = .none
-            }
+            if !showMosaicSub && isMosaicActive { viewModel.selectedTool = .none }
         }) {
             Label("モザイク", systemImage: "square.on.square")
-                .font(.caption)
-                .frame(minWidth: 80, minHeight: 32)
+                .font(.caption).frame(minHeight: 32)
         }
         .buttonStyle(.bordered)
         .tint(isMosaicActive ? .accentColor : nil)
         .keyboardShortcut(KeyEquivalent(Character(mosaicKey)), modifiers: [])
-        .help("モザイク")
     }
-
-    // MARK: - Mosaic Sub Buttons (範囲 / ブラシ)
 
     private var mosaicSubButtons: some View {
         HStack(spacing: 4) {
             Button(action: { viewModel.selectedTool = .mosaicRect }) {
                 Label("範囲", systemImage: "rectangle.dashed")
-                    .font(.caption2)
-                    .frame(minWidth: 50, minHeight: 28)
-            }
-            .buttonStyle(.bordered)
-            .tint(viewModel.selectedTool == .mosaicRect ? .accentColor : nil)
+                    .font(.caption2).frame(minHeight: 28)
+            }.buttonStyle(.bordered).tint(viewModel.selectedTool == .mosaicRect ? .accentColor : nil)
 
             Button(action: { viewModel.selectedTool = .mosaicStroke }) {
                 Label("ブラシ", systemImage: "paintbrush")
-                    .font(.caption2)
-                    .frame(minWidth: 50, minHeight: 28)
-            }
-            .buttonStyle(.bordered)
-            .tint(viewModel.selectedTool == .mosaicStroke ? .accentColor : nil)
+                    .font(.caption2).frame(minHeight: 28)
+            }.buttonStyle(.bordered).tint(viewModel.selectedTool == .mosaicStroke ? .accentColor : nil)
         }
     }
 
-    // MARK: - Mosaic Settings (エフェクト種類 + スライダー)
-
-    @ViewBuilder
-    private var mosaicSettings: some View {
-        if axis == .horizontal {
-            // 上側ツールバー: 横並び、スライダーは縦方向
-            HStack(spacing: 8) {
-                mosaicEffectPicker
-                verticalSlider(label: "粗さ", value: Binding(
-                    get: { Double(viewModel.mosaicBlockSize) },
-                    set: { viewModel.mosaicBlockSize = Int($0) }
-                ), range: 5...80, display: "\(viewModel.mosaicBlockSize)")
-                if viewModel.selectedTool == .mosaicStroke {
-                    verticalSlider(label: "太さ", value: Binding(
-                        get: { Double(viewModel.mosaicBrushSize) },
-                        set: { viewModel.mosaicBrushSize = CGFloat($0) }
-                    ), range: 5...100, display: "\(Int(viewModel.mosaicBrushSize))")
-                }
-            }
-        } else {
-            // 右側ツールバー: 縦並び、スライダーは横方向
-            VStack(spacing: 6) {
-                mosaicEffectPicker
-                compactSlider(label: "粗さ", value: Binding(
-                    get: { Double(viewModel.mosaicBlockSize) },
-                    set: { viewModel.mosaicBlockSize = Int($0) }
-                ), range: 5...80, display: "\(viewModel.mosaicBlockSize)")
-                if viewModel.selectedTool == .mosaicStroke {
-                    compactSlider(label: "太さ", value: Binding(
-                        get: { Double(viewModel.mosaicBrushSize) },
-                        set: { viewModel.mosaicBrushSize = CGFloat($0) }
-                    ), range: 5...100, display: "\(Int(viewModel.mosaicBrushSize))")
-                }
-            }
-        }
-    }
-
-    // エフェクト種類ドロップダウン
     private var mosaicEffectPicker: some View {
         Picker("", selection: $viewModel.selectedMosaicEffect) {
             ForEach(MosaicEffect.allCases, id: \.self) { effect in
@@ -498,62 +682,40 @@ struct ToolbarView: View {
             }
         }
         .pickerStyle(.menu)
-        .frame(width: 120)
         .controlSize(.small)
     }
 
-    // 縦方向スライダー（上側ツールバー用）— ラベル・数値はスライダーの左側
+    // 縦方向スライダー（上側ツールバー用）— ラベル・数値はスライダーの左側、ボタンと同じ高さ
     private func verticalSlider(label: String, value: Binding<Double>, range: ClosedRange<Double>, display: String) -> some View {
         HStack(spacing: 1) {
             VStack(spacing: 0) {
                 Text(display)
                     .font(.system(size: 9))
                     .monospacedDigit()
-                Spacer(minLength: 2)
+                Spacer(minLength: 0)
                 Text(label)
                     .font(.system(size: 9))
             }
-            .frame(width: 22, height: 56)
+            .frame(width: 20, height: 32)
             Slider(value: value, in: range, step: 1)
-                .controlSize(.small)
-                .frame(height: 56)
+                .controlSize(.mini)
+                .frame(height: 60)
                 .rotationEffect(.degrees(-90))
-                .frame(width: 16, height: 56)
+                .frame(width: 14, height: 32)
         }
-        .frame(height: 56)
+        .frame(height: 32)
     }
-
-    // MARK: - Helpers
 
     private var divider: some View {
-        Divider()
-            .frame(width: axis == .vertical ? 60 : nil, height: axis == .horizontal ? 32 : nil)
+        Divider().frame(height: 32)
     }
-
-    private func compactSlider(label: String, value: Binding<Double>, range: ClosedRange<Double>, display: String) -> some View {
-        HStack(spacing: 4) {
-            Text(label)
-                .font(.caption2)
-                .frame(width: 26)
-            Slider(value: value, in: range, step: 1)
-                .controlSize(.small)
-                .frame(width: 90)
-            Text(display)
-                .font(.caption2)
-                .monospacedDigit()
-                .frame(width: 24, alignment: .trailing)
-        }
-    }
-
-    // MARK: - Tool Button Helper
 
     private func toolButton(for tool: EditTool, icon: String, label: String, shortcutKey: String) -> some View {
         Button(action: {
             viewModel.selectedTool = viewModel.selectedTool == tool ? .none : tool
         }) {
             Label(label, systemImage: icon)
-                .font(.caption)
-                .frame(minWidth: 80, minHeight: 32)
+                .font(.caption).frame(minHeight: 32)
         }
         .buttonStyle(.bordered)
         .tint(viewModel.selectedTool == tool ? .accentColor : nil)
@@ -600,6 +762,17 @@ struct CanvasView: View {
                         if viewModel.bgPreviewImage != nil && viewModel.bgBorderVisible {
                             TransparencyBorderOverlay(
                                 previewImage: viewModel.bgPreviewImage!,
+                                displayInfo: displayInfo
+                            )
+                        }
+
+                        // モザイクプレビューの境界線（赤色で点滅）
+                        if viewModel.isMosaicPreviewing && viewModel.bgBorderVisible,
+                           let orig = viewModel.mosaicOriginalImage,
+                           let origCG = orig.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+                            MosaicBorderOverlay(
+                                originalCG: origCG,
+                                previewImage: viewModel.mosaicPreviewImage!,
                                 displayInfo: displayInfo
                             )
                         }
@@ -713,7 +886,7 @@ struct CanvasView: View {
     // MARK: - Drag Handling
 
     private func handleDragChanged(_ value: DragGesture.Value, in size: CGSize) {
-        guard !viewModel.isProcessing, viewModel.bgPreviewImage == nil else { return }
+        guard !viewModel.isProcessing, viewModel.bgPreviewImage == nil, !viewModel.isMosaicPreviewing else { return }
 
         switch viewModel.selectedTool {
         case .trim, .mosaicRect:
@@ -735,7 +908,7 @@ struct CanvasView: View {
     }
 
     private func handleDragEnded(_ value: DragGesture.Value, in size: CGSize) {
-        guard !viewModel.isProcessing, viewModel.bgPreviewImage == nil else { return }
+        guard !viewModel.isProcessing, viewModel.bgPreviewImage == nil, !viewModel.isMosaicPreviewing else { return }
         guard let image = viewModel.displayImage else { return }
         guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
 
@@ -751,17 +924,11 @@ struct CanvasView: View {
 
         case .mosaicRect:
             let imageRect = convertRectToImageCoordinates(selectionRect, viewSize: size, imageSize: imageSize)
-            if let processor = MosaicProcessor(image: cgImage) {
-                let result = processor.applyMosaic(in: imageRect, effect: viewModel.selectedMosaicEffect, blockSize: viewModel.mosaicBlockSize)
-                viewModel.applyEdit(NSImage(cgImage: result, size: NSSize(width: result.width, height: result.height)))
-            }
+            viewModel.startMosaicPreview(originalImage: image, cgImage: cgImage, rect: imageRect, points: nil, isStroke: false)
 
         case .mosaicStroke:
             let imagePoints = convertPointsToImageCoordinates(currentPath, viewSize: size, imageSize: imageSize)
-            if let processor = MosaicProcessor(image: cgImage) {
-                let result = processor.applyMosaicStroke(points: imagePoints, brushSize: viewModel.mosaicBrushSize, effect: viewModel.selectedMosaicEffect)
-                viewModel.applyEdit(NSImage(cgImage: result, size: NSSize(width: result.width, height: result.height)))
-            }
+            viewModel.startMosaicPreview(originalImage: image, cgImage: cgImage, rect: nil, points: imagePoints, isStroke: true)
 
         case .backgroundRemoval:
             viewModel.performBackgroundRemoval(at: value.location, viewSize: size)
@@ -864,6 +1031,60 @@ struct TransparencyBorderOverlay: View {
             }
         }
         return false
+    }
+}
+
+// MARK: - Mosaic Border Overlay (red blinking)
+
+struct MosaicBorderOverlay: View {
+    let originalCG: CGImage
+    let previewImage: CGImage
+    let displayInfo: (origin: CGPoint, scale: CGFloat, displaySize: CGSize)
+
+    var body: some View {
+        Canvas { context, size in
+            let w = previewImage.width, h = previewImage.height
+            guard w == originalCG.width && h == originalCG.height else { return }
+
+            let sampleW = min(w, 300), sampleH = min(h, 300)
+            let stepX = max(1, w / sampleW), stepY = max(1, h / sampleH)
+
+            let colorSpace = CGColorSpaceCreateDeviceRGB()
+            let bInfo = CGImageAlphaInfo.premultipliedLast.rawValue
+            guard let c1 = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w*4, space: colorSpace, bitmapInfo: bInfo),
+                  let c2 = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w*4, space: colorSpace, bitmapInfo: bInfo) else { return }
+            c1.draw(originalCG, in: CGRect(x: 0, y: 0, width: w, height: h))
+            c2.draw(previewImage, in: CGRect(x: 0, y: 0, width: w, height: h))
+            guard let d1 = c1.data?.assumingMemoryBound(to: UInt8.self),
+                  let d2 = c2.data?.assumingMemoryBound(to: UInt8.self) else { return }
+
+            var path = Path()
+            let scX = displayInfo.displaySize.width / CGFloat(w)
+            let scY = displayInfo.displaySize.height / CGFloat(h)
+            let dW = max(scX * CGFloat(stepX), 1.5), dH = max(scY * CGFloat(stepY), 1.5)
+
+            for sy in stride(from: 0, to: h, by: stepY) {
+                for sx in stride(from: 0, to: w, by: stepX) {
+                    let off = (sy * w + sx) * 4
+                    let changed = d1[off] != d2[off] || d1[off+1] != d2[off+1] || d1[off+2] != d2[off+2]
+                    if changed {
+                        let nb = [(sx-stepX,sy),(sx+stepX,sy),(sx,sy-stepY),(sx,sy+stepY)]
+                        var border = false
+                        for (nx,ny) in nb {
+                            guard nx >= 0 && nx < w && ny >= 0 && ny < h else { border = true; break }
+                            let noff = (ny*w+nx)*4
+                            if d1[noff] == d2[noff] && d1[noff+1] == d2[noff+1] && d1[noff+2] == d2[noff+2] { border = true; break }
+                        }
+                        if border {
+                            path.addRect(CGRect(x: displayInfo.origin.x + CGFloat(sx)*scX,
+                                                y: displayInfo.origin.y + CGFloat(sy)*scY, width: dW, height: dH))
+                        }
+                    }
+                }
+            }
+            context.stroke(path, with: .color(.red), style: StrokeStyle(lineWidth: 2))
+        }
+        .allowsHitTesting(false)
     }
 }
 

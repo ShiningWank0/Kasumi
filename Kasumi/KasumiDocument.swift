@@ -105,20 +105,20 @@ class KasumiDocument {
     // MARK: - Undo / Redo
     
     func undo() -> CGImage? {
-        guard type == .image else { return nil }
-        
-        if let previousImage = editHistory.undo() {
+        guard type == .image, let current = cgImage else { return nil }
+
+        if let previousImage = editHistory.undo(currentImage: current) {
             cgImage = previousImage
             image = NSImage(cgImage: previousImage, size: NSSize(width: previousImage.width, height: previousImage.height))
             return previousImage
         }
         return nil
     }
-    
+
     func redo() -> CGImage? {
-        guard type == .image else { return nil }
-        
-        if let nextImage = editHistory.redo() {
+        guard type == .image, let current = cgImage else { return nil }
+
+        if let nextImage = editHistory.redo(currentImage: current) {
             cgImage = nextImage
             image = NSImage(cgImage: nextImage, size: NSSize(width: nextImage.width, height: nextImage.height))
             return nextImage
