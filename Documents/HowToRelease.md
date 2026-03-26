@@ -27,7 +27,17 @@ git push -u origin feature/your-feature-name
 
 ### 3. バージョンタグを付与
 
-`main` ブランチに切り替えて最新を取得し、セマンティックバージョニングに従ったタグを付けます。
+PR がマージされたら、GitHub 上でタグを作成します。
+
+**方法A: GitHub Web UI（推奨）**
+
+1. GitHub リポジトリの [Releases ページ](../../releases) を開く
+2. 「Draft a new release」をクリック
+3. 「Choose a tag」で新しいタグ名を入力（例: `v1.0.0`）→ 「Create new tag: v1.0.0 on publish」を選択
+4. Target は `main` ブランチを指定
+5. 「Publish release」をクリック
+
+**方法B: ローカルから**
 
 ```bash
 git checkout main
@@ -36,6 +46,8 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
+> **注意:** ブランチ保護ルールは `main` ブランチへの直接コミットの push を禁止しますが、タグの push は別の操作であり制限されません。ただしリポジトリにタグ保護ルールが設定されている場合は、方法A を使用してください。
+
 タグ名は `v` で始める必要があります（例: `v1.0.0`, `v1.1.0`, `v2.0.0-beta`）。
 
 ### 4. 自動リリース
@@ -43,14 +55,15 @@ git push origin v1.0.0
 タグを push すると、GitHub Actions（`.github/workflows/release.yml`）が自動で以下を実行します：
 
 1. macOS 15 + Xcode 16 環境でビルド
-2. `Kasumi.app` を `Kasumi.zip` にパッケージ
-3. GitHub Releases にリリースを作成し、`Kasumi.zip` をアップロード
+2. `Kasumi.app` を DMG ファイルにパッケージ（Applications フォルダへのシンボリックリンク付き）
+3. GitHub Releases にリリースを作成し、`Kasumi.dmg` をアップロード
 4. コミット履歴からリリースノートを自動生成
 
 ### 5. リリースの確認
 
 - [Releases ページ](../../releases) でリリースが正しく作成されたか確認
-- `Kasumi.zip` がダウンロード可能か確認
+- `Kasumi.dmg` がダウンロード可能か確認
+- DMG を開いて `Kasumi.app` が正しく含まれているか確認
 - Actions タブでビルドログにエラーがないか確認
 
 ## バージョニング規則

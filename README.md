@@ -27,9 +27,8 @@
 
 ### GitHub Releases からダウンロード
 
-1. [Releases](../../releases) ページから最新の `Kasumi.zip` をダウンロード
-2. zipを解凍して `Kasumi.app` を取得
-3. `Kasumi.app` を「アプリケーション」フォルダにドラッグ
+1. [Releases](../../releases) ページから最新の `Kasumi.dmg` をダウンロード
+2. DMGファイルを開き、`Kasumi.app` を「アプリケーション」フォルダにドラッグ
 4. 初回起動時は右クリック → 「開く」を選択（署名なしアプリのため）
 
 ### ソースからビルド

@@ -29,7 +29,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build
 
-      - name: Package app
+      - name: Package app as DMG
         run: |
           APP_PATH=$(find build -name "Kasumi.app" -type d | head -1)
           if [ -z "$APP_PATH" ]; then
@@ -37,12 +37,22 @@ jobs:
             exit 1
           fi
           echo "Found app at: $APP_PATH"
-          ditto -c -k --keepParent "$APP_PATH" Kasumi.zip
+
+          STAGING_DIR=$(mktemp -d)
+          cp -R "$APP_PATH" "$STAGING_DIR/"
+          ln -s /Applications "$STAGING_DIR/Applications"
+
+          hdiutil create -volname "Kasumi" \
+            -srcfolder "$STAGING_DIR" \
+            -ov -format UDZO \
+            Kasumi.dmg
+
+          rm -rf "$STAGING_DIR"
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: Kasumi.zip
+          files: Kasumi.dmg
           generate_release_notes: true
           draft: false
           prerelease: false
