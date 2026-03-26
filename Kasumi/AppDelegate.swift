@@ -120,23 +120,33 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Finder Integration
     
     private func getFinderSelectedFiles() -> [URL]? {
+        // Finderが最前面アプリでなければスキップ
+        guard let frontApp = NSWorkspace.shared.frontmostApplication,
+              frontApp.bundleIdentifier == "com.apple.finder" else {
+            return nil
+        }
+
         let script = """
         tell application "Finder"
             set selectedItems to selection
+            if (count of selectedItems) is 0 then return ""
             set filePaths to {}
             repeat with anItem in selectedItems
                 set end of filePaths to POSIX path of (anItem as alias)
             end repeat
-            return filePaths
+            set AppleScript's text item delimiters to linefeed
+            return filePaths as text
         end tell
         """
-        
+
         var error: NSDictionary?
         if let scriptObject = NSAppleScript(source: script) {
             let output = scriptObject.executeAndReturnError(&error)
-            if error == nil {
-                let paths = output.stringValue?.components(separatedBy: ", ") ?? []
+            if error == nil, let text = output.stringValue, !text.isEmpty {
+                let paths = text.components(separatedBy: "\n").filter { !$0.isEmpty }
+                let supportedExtensions = Set(["jpg", "jpeg", "png", "heic", "tiff", "tif", "pdf"])
                 let urls = paths.compactMap { URL(fileURLWithPath: $0) }
+                    .filter { supportedExtensions.contains($0.pathExtension.lowercased()) }
                 return urls.isEmpty ? nil : urls
             }
         }

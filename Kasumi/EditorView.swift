@@ -131,6 +131,9 @@ class EditorViewModel: ObservableObject {
     var mosaicPreviewPoints: [CGPoint] = []
     var mosaicPreviewIsStroke: Bool = false
     var isMosaicPreviewing: Bool { mosaicPreviewImage != nil }
+    // ビュー座標（赤フチ表示用）
+    var mosaicViewRect: CGRect = .zero
+    var mosaicViewPoints: [CGPoint] = []
 
     private let document: KasumiDocument
     private var backgroundTask: Task<Void, Never>?
@@ -254,6 +257,8 @@ class EditorViewModel: ObservableObject {
         mosaicOriginalImage = nil
         mosaicPreviewRect = .zero
         mosaicPreviewPoints = []
+        mosaicViewRect = .zero
+        mosaicViewPoints = []
         stopBorderBlink()
         bgBorderVisible = true
     }
@@ -405,13 +410,13 @@ struct ToolbarView: View {
             }
 
             if isMosaicActive {
-                // モザイク設定 — ドロップダウン＋スライダー（ラベルと数値はスライダーの上下）
                 VStack(spacing: 4) {
                     mosaicEffectPicker
                     HStack(spacing: 4) {
-                        Text("粗さ").font(.system(size: 9))
+                        Text("粗さ").font(.system(size: 9)).foregroundColor(.secondary)
                         Spacer()
-                        Text("\(viewModel.mosaicBlockSize)").font(.system(size: 9)).monospacedDigit()
+                        editableNumberField(value: $viewModel.mosaicBlockSize, range: 5...80)
+                            .font(.system(size: 9))
                     }
                     Slider(value: Binding(
                         get: { Double(viewModel.mosaicBlockSize) },
@@ -420,9 +425,13 @@ struct ToolbarView: View {
                         .controlSize(.small)
                     if viewModel.selectedTool == .mosaicStroke {
                         HStack(spacing: 4) {
-                            Text("太さ").font(.system(size: 9))
+                            Text("太さ").font(.system(size: 9)).foregroundColor(.secondary)
                             Spacer()
-                            Text("\(Int(viewModel.mosaicBrushSize))").font(.system(size: 9)).monospacedDigit()
+                            editableNumberField(value: Binding(
+                                get: { Int(viewModel.mosaicBrushSize) },
+                                set: { viewModel.mosaicBrushSize = CGFloat($0) }
+                            ), range: 5...100)
+                                .font(.system(size: 9))
                         }
                         Slider(value: Binding(
                             get: { Double(viewModel.mosaicBrushSize) },
@@ -520,18 +529,20 @@ struct ToolbarView: View {
             }
 
             if isMosaicActive {
-                // ドロップダウン + 縦スライダー（横並び）
                 HStack(spacing: 4) {
                     mosaicEffectPicker
                     verticalSlider(label: "粗さ", value: Binding(
                         get: { Double(viewModel.mosaicBlockSize) },
                         set: { viewModel.mosaicBlockSize = Int($0) }
-                    ), range: 5...80, display: "\(viewModel.mosaicBlockSize)")
+                    ), range: 5...80, intValue: $viewModel.mosaicBlockSize)
                     if viewModel.selectedTool == .mosaicStroke {
                         verticalSlider(label: "太さ", value: Binding(
                             get: { Double(viewModel.mosaicBrushSize) },
                             set: { viewModel.mosaicBrushSize = CGFloat($0) }
-                        ), range: 5...100, display: "\(Int(viewModel.mosaicBrushSize))")
+                        ), range: 5...100, intValue: Binding(
+                            get: { Int(viewModel.mosaicBrushSize) },
+                            set: { viewModel.mosaicBrushSize = CGFloat($0) }
+                        ))
                     }
                 }
             }
@@ -685,25 +696,46 @@ struct ToolbarView: View {
         .controlSize(.small)
     }
 
-    // 縦方向スライダー（上側ツールバー用）— ラベル・数値はスライダーの左側、ボタンと同じ高さ
-    private func verticalSlider(label: String, value: Binding<Double>, range: ClosedRange<Double>, display: String) -> some View {
-        HStack(spacing: 1) {
+    // 縦方向スライダー（上側ツールバー用）— ラベル・数値はスライダーの左側
+    private func verticalSlider(label: String, value: Binding<Double>, range: ClosedRange<Double>, intValue: Binding<Int>) -> some View {
+        HStack(spacing: 2) {
             VStack(spacing: 0) {
-                Text(display)
+                editableNumberField(value: intValue, range: Int(range.lowerBound)...Int(range.upperBound))
                     .font(.system(size: 9))
-                    .monospacedDigit()
                 Spacer(minLength: 0)
                 Text(label)
                     .font(.system(size: 9))
+                    .foregroundColor(.secondary)
             }
-            .frame(width: 20, height: 32)
-            Slider(value: value, in: range, step: 1)
-                .controlSize(.mini)
-                .frame(height: 60)
-                .rotationEffect(.degrees(-90))
-                .frame(width: 14, height: 32)
+            .frame(width: 22)
+            GeometryReader { geo in
+                Slider(value: value, in: range, step: 1)
+                    .controlSize(.mini)
+                    .frame(width: geo.size.height)
+                    .rotationEffect(.degrees(-90))
+                    .frame(width: geo.size.width, height: geo.size.height)
+            }
+            .frame(width: 16)
         }
-        .frame(height: 32)
+        .frame(width: 40)
+    }
+
+    // 数値直接入力フィールド
+    private func editableNumberField(value: Binding<Int>, range: ClosedRange<Int>) -> some View {
+        TextField("", text: Binding<String>(
+            get: { "\(value.wrappedValue)" },
+            set: { newText in
+                let filtered = newText.filter { $0.isNumber }
+                if let num = Int(filtered) {
+                    value.wrappedValue = min(max(num, range.lowerBound), range.upperBound)
+                }
+            }
+        ))
+        .monospacedDigit()
+        .multilineTextAlignment(.center)
+        .textFieldStyle(.plain)
+        .frame(width: 28)
+        .onSubmit {} // Enterで確定
     }
 
     private var divider: some View {
@@ -766,15 +798,26 @@ struct CanvasView: View {
                             )
                         }
 
-                        // モザイクプレビューの境界線（赤色で点滅）
-                        if viewModel.isMosaicPreviewing && viewModel.bgBorderVisible,
-                           let orig = viewModel.mosaicOriginalImage,
-                           let origCG = orig.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-                            MosaicBorderOverlay(
-                                originalCG: origCG,
-                                previewImage: viewModel.mosaicPreviewImage!,
-                                displayInfo: displayInfo
-                            )
+                        // モザイクプレビューの選択範囲フチ（赤色で点滅）
+                        if viewModel.isMosaicPreviewing && viewModel.bgBorderVisible {
+                            if viewModel.mosaicPreviewIsStroke {
+                                // ブラシ: ストロークのパス外枠
+                                Path { path in
+                                    let pts = viewModel.mosaicViewPoints
+                                    guard !pts.isEmpty else { return }
+                                    path.move(to: pts[0])
+                                    for pt in pts.dropFirst() { path.addLine(to: pt) }
+                                }
+                                .stroke(Color.red, style: StrokeStyle(lineWidth: max(viewModel.mosaicBrushSize * displayInfo.scale * 0.05, 3), lineCap: .round, lineJoin: .round))
+                                .allowsHitTesting(false)
+                            } else {
+                                // 範囲: 矩形の外枠
+                                Rectangle()
+                                    .stroke(Color.red, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
+                                    .frame(width: viewModel.mosaicViewRect.width, height: viewModel.mosaicViewRect.height)
+                                    .position(x: viewModel.mosaicViewRect.midX, y: viewModel.mosaicViewRect.midY)
+                                    .allowsHitTesting(false)
+                            }
                         }
                     }
                 }
@@ -924,10 +967,12 @@ struct CanvasView: View {
 
         case .mosaicRect:
             let imageRect = convertRectToImageCoordinates(selectionRect, viewSize: size, imageSize: imageSize)
+            viewModel.mosaicViewRect = selectionRect
             viewModel.startMosaicPreview(originalImage: image, cgImage: cgImage, rect: imageRect, points: nil, isStroke: false)
 
         case .mosaicStroke:
             let imagePoints = convertPointsToImageCoordinates(currentPath, viewSize: size, imageSize: imageSize)
+            viewModel.mosaicViewPoints = currentPath
             viewModel.startMosaicPreview(originalImage: image, cgImage: cgImage, rect: nil, points: imagePoints, isStroke: true)
 
         case .backgroundRemoval:
@@ -1031,60 +1076,6 @@ struct TransparencyBorderOverlay: View {
             }
         }
         return false
-    }
-}
-
-// MARK: - Mosaic Border Overlay (red blinking)
-
-struct MosaicBorderOverlay: View {
-    let originalCG: CGImage
-    let previewImage: CGImage
-    let displayInfo: (origin: CGPoint, scale: CGFloat, displaySize: CGSize)
-
-    var body: some View {
-        Canvas { context, size in
-            let w = previewImage.width, h = previewImage.height
-            guard w == originalCG.width && h == originalCG.height else { return }
-
-            let sampleW = min(w, 300), sampleH = min(h, 300)
-            let stepX = max(1, w / sampleW), stepY = max(1, h / sampleH)
-
-            let colorSpace = CGColorSpaceCreateDeviceRGB()
-            let bInfo = CGImageAlphaInfo.premultipliedLast.rawValue
-            guard let c1 = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w*4, space: colorSpace, bitmapInfo: bInfo),
-                  let c2 = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w*4, space: colorSpace, bitmapInfo: bInfo) else { return }
-            c1.draw(originalCG, in: CGRect(x: 0, y: 0, width: w, height: h))
-            c2.draw(previewImage, in: CGRect(x: 0, y: 0, width: w, height: h))
-            guard let d1 = c1.data?.assumingMemoryBound(to: UInt8.self),
-                  let d2 = c2.data?.assumingMemoryBound(to: UInt8.self) else { return }
-
-            var path = Path()
-            let scX = displayInfo.displaySize.width / CGFloat(w)
-            let scY = displayInfo.displaySize.height / CGFloat(h)
-            let dW = max(scX * CGFloat(stepX), 1.5), dH = max(scY * CGFloat(stepY), 1.5)
-
-            for sy in stride(from: 0, to: h, by: stepY) {
-                for sx in stride(from: 0, to: w, by: stepX) {
-                    let off = (sy * w + sx) * 4
-                    let changed = d1[off] != d2[off] || d1[off+1] != d2[off+1] || d1[off+2] != d2[off+2]
-                    if changed {
-                        let nb = [(sx-stepX,sy),(sx+stepX,sy),(sx,sy-stepY),(sx,sy+stepY)]
-                        var border = false
-                        for (nx,ny) in nb {
-                            guard nx >= 0 && nx < w && ny >= 0 && ny < h else { border = true; break }
-                            let noff = (ny*w+nx)*4
-                            if d1[noff] == d2[noff] && d1[noff+1] == d2[noff+1] && d1[noff+2] == d2[noff+2] { border = true; break }
-                        }
-                        if border {
-                            path.addRect(CGRect(x: displayInfo.origin.x + CGFloat(sx)*scX,
-                                                y: displayInfo.origin.y + CGFloat(sy)*scY, width: dW, height: dH))
-                        }
-                    }
-                }
-            }
-            context.stroke(path, with: .color(.red), style: StrokeStyle(lineWidth: 2))
-        }
-        .allowsHitTesting(false)
     }
 }
 
