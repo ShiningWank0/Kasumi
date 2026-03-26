@@ -314,16 +314,21 @@ struct ToolbarView: View {
             // モザイク（親ボタン）
             mosaicParentButton
 
-            // 範囲 / ブラシ ボタン（モザイク展開時、モザイクと背景透過の間に表示）
+            // 範囲 / ブラシ ボタン（モザイクと背景透過の間）
             if showMosaicSub || isMosaicActive {
                 mosaicSubButtons
+            }
+
+            // モザイク設定（ドロップダウン・スライダー — 範囲/ブラシと背景透過の間）
+            if isMosaicActive {
+                mosaicSettings
             }
 
             // 背景透過
             toolButton(for: .backgroundRemoval, icon: "wand.and.stars", label: "背景透過", shortcut: "t")
 
-            // ズームリセット
-            if viewModel.zoomScale > 1.0 {
+            // ズーム・パンリセット
+            if viewModel.zoomScale > 1.0 || viewModel.panOffset != .zero {
                 divider
                 Button(action: { viewModel.resetZoom() }) {
                     Label("表示リセット", systemImage: "arrow.up.left.and.arrow.down.right")
@@ -390,12 +395,6 @@ struct ToolbarView: View {
             .keyboardShortcut("s", modifiers: .command)
             .help("保存")
 
-            // モザイクの追加設定（エフェクト種類・スライダー）を末尾に配置
-            if isMosaicActive {
-                divider
-                mosaicSettings
-            }
-
             Spacer(minLength: 0)
         }
         .padding(.horizontal, axis == .horizontal ? 10 : 6)
@@ -446,32 +445,68 @@ struct ToolbarView: View {
 
     // MARK: - Mosaic Settings (エフェクト種類 + スライダー)
 
+    @ViewBuilder
     private var mosaicSettings: some View {
-        HStack(spacing: 8) {
-            // エフェクト種類ドロップダウン
-            Picker("", selection: $viewModel.selectedMosaicEffect) {
-                ForEach(MosaicEffect.allCases, id: \.self) { effect in
-                    Text(effect.label).tag(effect)
+        if axis == .horizontal {
+            // 上側ツールバー: 横並び、スライダーは縦方向
+            HStack(spacing: 8) {
+                mosaicEffectPicker
+                verticalSlider(label: "粗さ", value: Binding(
+                    get: { Double(viewModel.mosaicBlockSize) },
+                    set: { viewModel.mosaicBlockSize = Int($0) }
+                ), range: 5...80, display: "\(viewModel.mosaicBlockSize)")
+                if viewModel.selectedTool == .mosaicStroke {
+                    verticalSlider(label: "太さ", value: Binding(
+                        get: { Double(viewModel.mosaicBrushSize) },
+                        set: { viewModel.mosaicBrushSize = CGFloat($0) }
+                    ), range: 5...100, display: "\(Int(viewModel.mosaicBrushSize))")
                 }
             }
-            .pickerStyle(.menu)
-            .frame(width: 120)
-            .controlSize(.small)
-
-            // 粗さスライダー（範囲・ブラシ共通）
-            compactSlider(label: "粗さ", value: Binding(
-                get: { Double(viewModel.mosaicBlockSize) },
-                set: { viewModel.mosaicBlockSize = Int($0) }
-            ), range: 5...80, display: "\(viewModel.mosaicBlockSize)")
-
-            // 太さスライダー（ブラシのみ）
-            if viewModel.selectedTool == .mosaicStroke {
-                compactSlider(label: "太さ", value: Binding(
-                    get: { Double(viewModel.mosaicBrushSize) },
-                    set: { viewModel.mosaicBrushSize = CGFloat($0) }
-                ), range: 5...100, display: "\(Int(viewModel.mosaicBrushSize))")
+        } else {
+            // 右側ツールバー: 縦並び、スライダーは横方向
+            VStack(spacing: 6) {
+                mosaicEffectPicker
+                compactSlider(label: "粗さ", value: Binding(
+                    get: { Double(viewModel.mosaicBlockSize) },
+                    set: { viewModel.mosaicBlockSize = Int($0) }
+                ), range: 5...80, display: "\(viewModel.mosaicBlockSize)")
+                if viewModel.selectedTool == .mosaicStroke {
+                    compactSlider(label: "太さ", value: Binding(
+                        get: { Double(viewModel.mosaicBrushSize) },
+                        set: { viewModel.mosaicBrushSize = CGFloat($0) }
+                    ), range: 5...100, display: "\(Int(viewModel.mosaicBrushSize))")
+                }
             }
         }
+    }
+
+    // エフェクト種類ドロップダウン
+    private var mosaicEffectPicker: some View {
+        Picker("", selection: $viewModel.selectedMosaicEffect) {
+            ForEach(MosaicEffect.allCases, id: \.self) { effect in
+                Text(effect.label).tag(effect)
+            }
+        }
+        .pickerStyle(.menu)
+        .frame(width: 120)
+        .controlSize(.small)
+    }
+
+    // 縦方向スライダー（上側ツールバー用）
+    private func verticalSlider(label: String, value: Binding<Double>, range: ClosedRange<Double>, display: String) -> some View {
+        VStack(spacing: 2) {
+            Text(display)
+                .font(.caption2)
+                .monospacedDigit()
+            Slider(value: value, in: range, step: 1)
+                .controlSize(.small)
+                .frame(height: 60)
+                .rotationEffect(.degrees(-90))
+                .frame(width: 20, height: 60)
+            Text(label)
+                .font(.caption2)
+        }
+        .frame(width: 30)
     }
 
     // MARK: - Helpers
@@ -523,67 +558,68 @@ struct CanvasView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            // チェッカーボードは常にビュー全体を覆う（回転・ズームの影響を受けない）
-            CheckerboardView()
-                .frame(width: geometry.size.width, height: geometry.size.height)
-
-            // 画像とオーバーレイはズーム・パン・回転の影響を受ける
             ZStack {
-                if let image = viewModel.displayImage {
-                    let imageSize = image.size
-                    let displayInfo = canvasDisplayInfo(viewSize: geometry.size, imageSize: imageSize)
+                // チェッカーボード（ズームの影響を受けない）
+                CheckerboardView()
+                    .frame(width: geometry.size.width, height: geometry.size.height)
 
-                    // メイン画像（またはプレビュー画像）
-                    Group {
-                        if let preview = viewModel.bgPreviewImage {
-                            Image(nsImage: NSImage(cgImage: preview, size: NSSize(width: preview.width, height: preview.height)))
-                                .resizable()
-                                .scaledToFit()
-                        } else {
-                            Image(nsImage: image)
-                                .resizable()
-                                .scaledToFit()
-                        }
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // 画像と背景透過プレビューはズーム・パンの影響を受ける
+                ZStack {
+                    if let image = viewModel.displayImage {
+                        let displayInfo = canvasDisplayInfo(viewSize: geometry.size, imageSize: image.size)
 
-                    // 背景透過プレビューの境界線（赤色で点滅）
-                    if viewModel.bgPreviewImage != nil && viewModel.bgBorderVisible {
-                        TransparencyBorderOverlay(
-                            previewImage: viewModel.bgPreviewImage!,
-                            displayInfo: displayInfo
-                        )
-                    }
-
-                    // Selection overlay
-                    if (viewModel.selectedTool == .trim || viewModel.selectedTool == .mosaicRect) && selectionRect.width > 2 {
-                        Rectangle()
-                            .stroke(Color.blue, style: StrokeStyle(lineWidth: 2, dash: [6, 3]))
-                            .background(
-                                viewModel.selectedTool == .trim
-                                    ? Color.blue.opacity(0.1)
-                                    : Color.red.opacity(0.15)
-                            )
-                            .frame(width: selectionRect.width, height: selectionRect.height)
-                            .position(x: selectionRect.midX, y: selectionRect.midY)
-                    }
-
-                    // Stroke overlay
-                    if viewModel.selectedTool == .mosaicStroke && !currentPath.isEmpty {
-                        Path { path in
-                            if let first = currentPath.first {
-                                path.move(to: first)
-                                for point in currentPath.dropFirst() {
-                                    path.addLine(to: point)
-                                }
+                        // メイン画像（またはプレビュー画像）
+                        Group {
+                            if let preview = viewModel.bgPreviewImage {
+                                Image(nsImage: NSImage(cgImage: preview, size: NSSize(width: preview.width, height: preview.height)))
+                                    .resizable()
+                                    .scaledToFit()
+                            } else {
+                                Image(nsImage: image)
+                                    .resizable()
+                                    .scaledToFit()
                             }
                         }
-                        .stroke(Color.blue.opacity(0.5), lineWidth: viewModel.mosaicBrushSize)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                        // 背景透過プレビューの境界線（赤色で点滅）
+                        if viewModel.bgPreviewImage != nil && viewModel.bgBorderVisible {
+                            TransparencyBorderOverlay(
+                                previewImage: viewModel.bgPreviewImage!,
+                                displayInfo: displayInfo
+                            )
+                        }
                     }
                 }
+                .scaleEffect(viewModel.zoomScale)
+                .offset(viewModel.panOffset)
+
+                // 選択オーバーレイ（ズーム変換の外 — ジェスチャー座標と同じ空間）
+                if (viewModel.selectedTool == .trim || viewModel.selectedTool == .mosaicRect) && selectionRect.width > 2 {
+                    Rectangle()
+                        .stroke(Color.blue, style: StrokeStyle(lineWidth: 2, dash: [6, 3]))
+                        .background(
+                            viewModel.selectedTool == .trim
+                                ? Color.blue.opacity(0.1)
+                                : Color.red.opacity(0.15)
+                        )
+                        .frame(width: selectionRect.width, height: selectionRect.height)
+                        .position(x: selectionRect.midX, y: selectionRect.midY)
+                }
+
+                // ストロークオーバーレイ（同様にズーム変換の外）
+                if viewModel.selectedTool == .mosaicStroke && !currentPath.isEmpty {
+                    Path { path in
+                        if let first = currentPath.first {
+                            path.move(to: first)
+                            for point in currentPath.dropFirst() {
+                                path.addLine(to: point)
+                            }
+                        }
+                    }
+                    .stroke(Color.blue.opacity(0.5), lineWidth: viewModel.mosaicBrushSize / viewModel.zoomScale)
+                }
             }
-            .scaleEffect(viewModel.zoomScale)
-            .offset(viewModel.panOffset)
             .frame(width: geometry.size.width, height: geometry.size.height)
             .contentShape(Rectangle())
             .gesture(editGesture(in: geometry.size))
@@ -877,17 +913,15 @@ class ScrollZoomNSView: NSView {
                 let locationInView = self.convert(event.locationInWindow, from: nil)
                 guard self.bounds.contains(locationInView) else { return event }
 
-                // トラックパッドの2本指スクロール → 拡大中ならパン移動
+                // トラックパッドの2本指スクロール → パン移動
                 if event.phase == .changed || event.momentumPhase == .changed {
                     Task { @MainActor in
-                        if viewModel.zoomScale > 1.0 {
-                            viewModel.panOffset = CGSize(
-                                width: viewModel.panOffset.width + event.scrollingDeltaX,
-                                height: viewModel.panOffset.height + event.scrollingDeltaY
-                            )
-                        }
+                        viewModel.panOffset = CGSize(
+                            width: viewModel.panOffset.width + event.scrollingDeltaX,
+                            height: viewModel.panOffset.height + event.scrollingDeltaY
+                        )
                     }
-                    return viewModel.zoomScale > 1.0 ? nil : event
+                    return nil
                 }
                 // マウスホイール（非トラックパッド）→ ズーム
                 else if event.phase == [] && event.momentumPhase == [] {
