@@ -120,9 +120,14 @@ class EditorViewModel: ObservableObject {
     @Published var mosaicBrushSize: CGFloat = 40
     @Published var selectedMosaicEffect: MosaicEffect = .classic
 
+    // 背景透過設定
+    @Published var bgTolerance: Int = 30
     // 背景透過プレビュー用
     @Published var bgPreviewImage: CGImage?
     @Published var bgBorderVisible: Bool = true
+    var bgOriginalImage: NSImage?
+    var bgStartPoint: CGPoint = .zero
+    var bgViewSize: CGSize = .zero
 
     // モザイクプレビュー用
     @Published var mosaicPreviewImage: CGImage?
@@ -178,14 +183,19 @@ class EditorViewModel: ObservableObject {
             imageSize: CGSize(width: cgImage.width, height: cgImage.height)
         )
 
+        bgOriginalImage = image
+        bgStartPoint = imagePoint
+        bgViewSize = viewSize
+
         backgroundTask?.cancel()
         isProcessing = true
 
         backgroundTask = Task {
             let remover = BackgroundRemover(image: cgImage)
-            let result = await remover.removeBackground(startingAt: imagePoint, tolerance: 30)
+            let result = await remover.removeBackground(startingAt: imagePoint, tolerance: bgTolerance)
             if !Task.isCancelled, let result = result {
                 bgPreviewImage = result
+                displayImage = NSImage(cgImage: result, size: NSSize(width: result.width, height: result.height))
                 startBorderBlink()
             }
             isProcessing = false
@@ -194,17 +204,44 @@ class EditorViewModel: ObservableObject {
 
     func confirmBackgroundRemoval() {
         guard let preview = bgPreviewImage else { return }
+        // 元画像に戻してからapplyEdit（undo履歴に元画像がpushされる）
+        if let orig = bgOriginalImage { displayImage = orig }
         let nsImage = NSImage(cgImage: preview, size: NSSize(width: preview.width, height: preview.height))
         applyEdit(nsImage)
-        clearBgPreview()
+        bgPreviewImage = nil
+        bgOriginalImage = nil
+        stopBorderBlink()
+        bgBorderVisible = true
     }
 
     func cancelBackgroundRemoval() {
         clearBgPreview()
     }
 
+    func recomputeBackgroundRemoval() {
+        guard let orig = bgOriginalImage,
+              let cgImage = orig.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+
+        backgroundTask?.cancel()
+        isProcessing = true
+
+        let startPt = bgStartPoint
+        let tol = bgTolerance
+        backgroundTask = Task {
+            let remover = BackgroundRemover(image: cgImage)
+            let result = await remover.removeBackground(startingAt: startPt, tolerance: tol)
+            if !Task.isCancelled, let result = result {
+                bgPreviewImage = result
+                displayImage = NSImage(cgImage: result, size: NSSize(width: result.width, height: result.height))
+            }
+            isProcessing = false
+        }
+    }
+
     private func clearBgPreview() {
+        if let orig = bgOriginalImage { displayImage = orig }
         bgPreviewImage = nil
+        bgOriginalImage = nil
         stopBorderBlink()
         bgBorderVisible = true
     }
@@ -447,6 +484,23 @@ struct ToolbarView: View {
             }
             .keyboardShortcut(KeyEquivalent(Character(bgRemovalKey)), modifiers: [])
 
+            // 背景透過の色範囲設定（背景透過と元に戻すの間）
+            if viewModel.selectedTool == .backgroundRemoval || viewModel.bgPreviewImage != nil {
+                VStack(spacing: 4) {
+                    HStack(spacing: 4) {
+                        Text("色範囲").font(.system(size: 9)).foregroundColor(.secondary)
+                        Spacer()
+                        editableNumberField(value: $viewModel.bgTolerance, range: 1...100)
+                            .font(.system(size: 9))
+                    }
+                    Slider(value: Binding(
+                        get: { Double(viewModel.bgTolerance) },
+                        set: { viewModel.bgTolerance = Int($0) }
+                    ), in: 1...100, step: 1)
+                        .controlSize(.small)
+                }
+            }
+
             if viewModel.zoomScale > 1.0 || viewModel.panOffset != .zero {
                 Divider()
                 fullWidthButton("表示リセット", icon: "arrow.up.left.and.arrow.down.right", active: false) {
@@ -513,6 +567,9 @@ struct ToolbarView: View {
         .onChange(of: viewModel.mosaicBrushSize) { _ in
             if viewModel.isMosaicPreviewing && viewModel.mosaicPreviewIsStroke { viewModel.recomputeMosaicPreview() }
         }
+        .onChange(of: viewModel.bgTolerance) { _ in
+            if viewModel.bgPreviewImage != nil { viewModel.recomputeBackgroundRemoval() }
+        }
     }
 
     // MARK: - 上側ツールバー（横並び）
@@ -531,12 +588,12 @@ struct ToolbarView: View {
             if isMosaicActive {
                 HStack(spacing: 4) {
                     mosaicEffectPicker
-                    verticalSlider(label: "粗さ", value: Binding(
+                    inlineSlider(label: "粗さ", value: Binding(
                         get: { Double(viewModel.mosaicBlockSize) },
                         set: { viewModel.mosaicBlockSize = Int($0) }
                     ), range: 5...80, intValue: $viewModel.mosaicBlockSize)
                     if viewModel.selectedTool == .mosaicStroke {
-                        verticalSlider(label: "太さ", value: Binding(
+                        inlineSlider(label: "太さ", value: Binding(
                             get: { Double(viewModel.mosaicBrushSize) },
                             set: { viewModel.mosaicBrushSize = CGFloat($0) }
                         ), range: 5...100, intValue: Binding(
@@ -548,6 +605,14 @@ struct ToolbarView: View {
             }
 
             toolButton(for: .backgroundRemoval, icon: "wand.and.stars", label: "背景透過", shortcutKey: bgRemovalKey)
+
+            // 背景透過設定（背景透過と元に戻すの間）
+            if viewModel.selectedTool == .backgroundRemoval || viewModel.bgPreviewImage != nil {
+                inlineSlider(label: "色範囲", value: Binding(
+                    get: { Double(viewModel.bgTolerance) },
+                    set: { viewModel.bgTolerance = Int($0) }
+                ), range: 1...100, intValue: $viewModel.bgTolerance)
+            }
 
             if viewModel.zoomScale > 1.0 || viewModel.panOffset != .zero {
                 divider
@@ -621,6 +686,9 @@ struct ToolbarView: View {
         }
         .onChange(of: viewModel.mosaicBrushSize) { _ in
             if viewModel.isMosaicPreviewing && viewModel.mosaicPreviewIsStroke { viewModel.recomputeMosaicPreview() }
+        }
+        .onChange(of: viewModel.bgTolerance) { _ in
+            if viewModel.bgPreviewImage != nil { viewModel.recomputeBackgroundRemoval() }
         }
     }
 
@@ -696,28 +764,16 @@ struct ToolbarView: View {
         .controlSize(.small)
     }
 
-    // 縦方向スライダー（上側ツールバー用）— ラベル・数値はスライダーの左側
-    private func verticalSlider(label: String, value: Binding<Double>, range: ClosedRange<Double>, intValue: Binding<Int>) -> some View {
-        HStack(spacing: 2) {
-            VStack(spacing: 0) {
-                editableNumberField(value: intValue, range: Int(range.lowerBound)...Int(range.upperBound))
-                    .font(.system(size: 9))
-                Spacer(minLength: 0)
-                Text(label)
-                    .font(.system(size: 9))
-                    .foregroundColor(.secondary)
-            }
-            .frame(width: 22)
-            GeometryReader { geo in
-                Slider(value: value, in: range, step: 1)
-                    .controlSize(.mini)
-                    .frame(width: geo.size.height)
-                    .rotationEffect(.degrees(-90))
-                    .frame(width: geo.size.width, height: geo.size.height)
-            }
-            .frame(width: 16)
+    // 横ツールバー用コンパクトスライダー（横方向、ラベル+数値+スライダーを1行に）
+    private func inlineSlider(label: String, value: Binding<Double>, range: ClosedRange<Double>, intValue: Binding<Int>) -> some View {
+        HStack(spacing: 3) {
+            Text(label).font(.system(size: 9)).foregroundColor(.secondary).fixedSize()
+            Slider(value: value, in: range, step: 1)
+                .controlSize(.mini)
+                .frame(width: 60)
+            editableNumberField(value: intValue, range: Int(range.lowerBound)...Int(range.upperBound))
+                .font(.system(size: 9))
         }
-        .frame(width: 40)
     }
 
     // 数値直接入力フィールド

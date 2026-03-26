@@ -58,10 +58,22 @@ struct GeneralSettingsView: View {
             }
             
             Section {
-                Toggle("Show floating toolbar", isOn: .constant(true))
-                Toggle("Auto-save on close", isOn: .constant(false))
+                Toggle("Dockに表示しない（グローバルショートカットのみ）", isOn: Binding(
+                    get: { UserDefaults.standard.bool(forKey: "hideDockIcon") },
+                    set: { newValue in
+                        UserDefaults.standard.set(newValue, forKey: "hideDockIcon")
+                        if newValue {
+                            NSApp.setActivationPolicy(.accessory)
+                        } else {
+                            NSApp.setActivationPolicy(.regular)
+                        }
+                    }
+                ))
+                Text("有効にすると、DockアイコンとメニューバーアプリUI が非表示になります。\nグローバルショートカット（⌘⇧K）でアプリを操作します。\n設定画面は次回起動時にショートカットから開けます。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             } header: {
-                Text("Editor Preferences")
+                Text("表示設定")
             }
         }
         .formStyle(.grouped)

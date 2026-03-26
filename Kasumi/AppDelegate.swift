@@ -19,6 +19,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupGlobalShortcut()
+
+        // Dock非表示設定を反映
+        if UserDefaults.standard.bool(forKey: "hideDockIcon") {
+            NSApp.setActivationPolicy(.accessory)
+        }
     }
     
     func applicationWillTerminate(_ notification: Notification) {
