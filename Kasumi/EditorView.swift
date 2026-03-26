@@ -228,6 +228,11 @@ class EditorViewModel: ObservableObject {
     // MARK: - Standard Operations
 
     func undo() {
+        // 背景透過プレビュー中はCmd+Zで取り消し
+        if bgPreviewImage != nil {
+            cancelBackgroundRemoval()
+            return
+        }
         if let previousImage = document.undo() {
             displayImage = NSImage(cgImage: previousImage, size: NSSize(width: previousImage.width, height: previousImage.height))
             updateUndoRedoState()
@@ -296,6 +301,11 @@ struct ToolbarView: View {
 
     @State private var showMosaicSub = false
 
+    // カスタマイズ可能なショートカット
+    @AppStorage("shortcut_trim") private var trimKey = "c"
+    @AppStorage("shortcut_mosaic") private var mosaicKey = "m"
+    @AppStorage("shortcut_bgremoval") private var bgRemovalKey = "t"
+
     private var isMosaicActive: Bool {
         viewModel.selectedTool == .mosaicRect || viewModel.selectedTool == .mosaicStroke
     }
@@ -309,7 +319,7 @@ struct ToolbarView: View {
             Spacer(minLength: 0)
 
             // 切り抜き
-            toolButton(for: .trim, icon: "crop", label: "切り抜き", shortcut: "c")
+            toolButton(for: .trim, icon: "crop", label: "切り抜き", shortcutKey: trimKey)
 
             // モザイク（親ボタン）
             mosaicParentButton
@@ -325,7 +335,7 @@ struct ToolbarView: View {
             }
 
             // 背景透過
-            toolButton(for: .backgroundRemoval, icon: "wand.and.stars", label: "背景透過", shortcut: "t")
+            toolButton(for: .backgroundRemoval, icon: "wand.and.stars", label: "背景透過", shortcutKey: bgRemovalKey)
 
             // ズーム・パンリセット
             if viewModel.zoomScale > 1.0 || viewModel.panOffset != .zero {
@@ -417,7 +427,7 @@ struct ToolbarView: View {
         }
         .buttonStyle(.bordered)
         .tint(isMosaicActive ? .accentColor : nil)
-        .keyboardShortcut("m", modifiers: [])
+        .keyboardShortcut(KeyEquivalent(Character(mosaicKey)), modifiers: [])
         .help("モザイク")
     }
 
@@ -492,21 +502,25 @@ struct ToolbarView: View {
         .controlSize(.small)
     }
 
-    // 縦方向スライダー（上側ツールバー用）
+    // 縦方向スライダー（上側ツールバー用）— ラベル・数値はスライダーの左側
     private func verticalSlider(label: String, value: Binding<Double>, range: ClosedRange<Double>, display: String) -> some View {
-        VStack(spacing: 2) {
-            Text(display)
-                .font(.caption2)
-                .monospacedDigit()
+        HStack(spacing: 1) {
+            VStack(spacing: 0) {
+                Text(display)
+                    .font(.system(size: 9))
+                    .monospacedDigit()
+                Spacer(minLength: 2)
+                Text(label)
+                    .font(.system(size: 9))
+            }
+            .frame(width: 22, height: 56)
             Slider(value: value, in: range, step: 1)
                 .controlSize(.small)
-                .frame(height: 60)
+                .frame(height: 56)
                 .rotationEffect(.degrees(-90))
-                .frame(width: 20, height: 60)
-            Text(label)
-                .font(.caption2)
+                .frame(width: 16, height: 56)
         }
-        .frame(width: 30)
+        .frame(height: 56)
     }
 
     // MARK: - Helpers
@@ -533,7 +547,7 @@ struct ToolbarView: View {
 
     // MARK: - Tool Button Helper
 
-    private func toolButton(for tool: EditTool, icon: String, label: String, shortcut: Character) -> some View {
+    private func toolButton(for tool: EditTool, icon: String, label: String, shortcutKey: String) -> some View {
         Button(action: {
             viewModel.selectedTool = viewModel.selectedTool == tool ? .none : tool
         }) {
@@ -543,8 +557,8 @@ struct ToolbarView: View {
         }
         .buttonStyle(.bordered)
         .tint(viewModel.selectedTool == tool ? .accentColor : nil)
-        .keyboardShortcut(KeyEquivalent(shortcut), modifiers: [])
-        .help(label)
+        .keyboardShortcut(KeyEquivalent(Character(shortcutKey)), modifiers: [])
+        .help("\(label) (\(shortcutKey.uppercased()))")
     }
 }
 
@@ -842,7 +856,8 @@ struct TransparencyBorderOverlay: View {
     private func checkNeighborOpaque(data: UnsafeMutablePointer<UInt8>, x: Int, y: Int, width: Int, height: Int, step: Int) -> Bool {
         let neighbors = [(x - step, y), (x + step, y), (x, y - step), (x, y + step)]
         for (nx, ny) in neighbors {
-            guard nx >= 0 && nx < width && ny >= 0 && ny < height else { continue }
+            // 画像の端は境界として扱う（フチを赤く表示する）
+            guard nx >= 0 && nx < width && ny >= 0 && ny < height else { return true }
             let offset = (ny * width + nx) * 4
             if data[offset + 3] > 0 {
                 return true
