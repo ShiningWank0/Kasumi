@@ -29,7 +29,11 @@
 
 1. [Releases](../../releases) ページから最新の `Kasumi.dmg` をダウンロード
 2. DMGファイルを開き、`Kasumi.app` を「アプリケーション」フォルダにドラッグ
-4. 初回起動時は右クリック → 「開く」を選択（署名なしアプリのため）
+3. **初回起動前に**ターミナルで以下を実行（Apple Developer ID 未署名のため macOS Gatekeeper にブロックされます）:
+   ```bash
+   xattr -cr /Applications/Kasumi.app
+   ```
+4. 初回起動時は右クリック → 「開く」を選択
 
 ### ソースからビルド
 
