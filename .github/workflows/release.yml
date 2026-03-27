@@ -25,9 +25,15 @@ jobs:
             -derivedDataPath build \
             -destination 'platform=macOS' \
             CODE_SIGN_IDENTITY="-" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=YES \
+            CODE_SIGNING_ALLOWED=YES \
             build
+
+      - name: Ad-hoc codesign
+        run: |
+          APP_PATH=$(find build -name "Kasumi.app" -type d | head -1)
+          codesign --force --deep --sign - "$APP_PATH"
+          codesign --verify --verbose "$APP_PATH"
 
       - name: Package app as DMG
         run: |
